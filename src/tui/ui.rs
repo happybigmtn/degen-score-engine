@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::tui::app::{App, InputMode, Screen};
+use crate::models::ScoreTier;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     match app.current_screen {
@@ -145,7 +146,7 @@ fn draw_results_screen(frame: &mut Frame, app: &App) {
         let mut text = vec![
             Line::from(vec![
                 Span::raw("User ID: "),
-                Span::styled(&score.user_id, Style::default().fg(Color::Cyan)),
+                Span::styled(&app.user_id, Style::default().fg(Color::Cyan)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -158,15 +159,14 @@ fn draw_results_screen(frame: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::raw("Tier: "),
                 Span::styled(
-                    &score.tier,
-                    Style::default().fg(match score.tier.as_str() {
-                        "Legendary" => Color::Magenta,
-                        "Diamond" => Color::Cyan,
-                        "Platinum" => Color::White,
-                        "Gold" => Color::Yellow,
-                        "Silver" => Color::Gray,
-                        "Bronze" => Color::Rgb(205, 127, 50),
-                        _ => Color::Gray,
+                    format!("{:?}", &score.tier),
+                    Style::default().fg(match &score.tier {
+                        ScoreTier::Legendary => Color::Magenta,
+                        ScoreTier::Epic => Color::Cyan,
+                        ScoreTier::Rare => Color::White,
+                        ScoreTier::Uncommon => Color::Yellow,
+                        ScoreTier::Common => Color::Gray,
+                        ScoreTier::Novice => Color::Rgb(205, 127, 50),
                     }).add_modifier(Modifier::BOLD)
                 ),
             ]),
@@ -175,24 +175,36 @@ fn draw_results_screen(frame: &mut Frame, app: &App) {
         ];
 
         // Add breakdown
-        for (category, value) in &score.breakdown {
-            text.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("{}: ", category),
-                    Style::default().fg(Color::White)
-                ),
-                Span::styled(
-                    format!("{:.2}", value),
-                    Style::default().fg(Color::Cyan)
-                ),
-            ]));
-        }
+        text.push(Line::from(vec![
+            Span::raw("  Trading: "),
+            Span::styled(format!("{:.2}", score.breakdown.trading_score), Style::default().fg(Color::Cyan)),
+        ]));
+        text.push(Line::from(vec![
+            Span::raw("  Gambling: "),
+            Span::styled(format!("{:.2}", score.breakdown.gambling_score), Style::default().fg(Color::Cyan)),
+        ]));
+        text.push(Line::from(vec![
+            Span::raw("  DeFi Activity: "),
+            Span::styled(format!("{:.2}", score.breakdown.defi_activity_score), Style::default().fg(Color::Cyan)),
+        ]));
+        text.push(Line::from(vec![
+            Span::raw("  NFT Portfolio: "),
+            Span::styled(format!("{:.2}", score.breakdown.nft_portfolio_score), Style::default().fg(Color::Cyan)),
+        ]));
+        text.push(Line::from(vec![
+            Span::raw("  Longevity: "),
+            Span::styled(format!("{:.2}", score.breakdown.longevity_score), Style::default().fg(Color::Cyan)),
+        ]));
+        text.push(Line::from(vec![
+            Span::raw("  Risk Profile: "),
+            Span::styled(format!("{:.2}", score.breakdown.risk_profile_score), Style::default().fg(Color::Cyan)),
+        ]));
 
         text.push(Line::from(""));
         
         // Airdrop eligibility
-        if score.airdrop_eligible {
+        let airdrop_eligible = score.total_score >= 20.0;
+        if airdrop_eligible {
             text.push(Line::from(vec![
                 Span::styled("✅ ", Style::default().fg(Color::Green)),
                 Span::styled(
@@ -200,15 +212,15 @@ fn draw_results_screen(frame: &mut Frame, app: &App) {
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
                 ),
             ]));
-            if let Some(allocation) = score.airdrop_allocation {
-                text.push(Line::from(vec![
-                    Span::raw("Estimated allocation: "),
-                    Span::styled(
-                        format!("{:.2} tokens", allocation),
-                        Style::default().fg(Color::Yellow)
-                    ),
-                ]));
-            }
+            // Calculate estimated allocation based on score
+            let allocation = score.total_score * 1000.0; // Example calculation
+            text.push(Line::from(vec![
+                Span::raw("Estimated allocation: "),
+                Span::styled(
+                    format!("{:.2} tokens", allocation),
+                    Style::default().fg(Color::Yellow)
+                ),
+            ]));
         } else {
             text.push(Line::from(vec![
                 Span::styled("❌ ", Style::default().fg(Color::Red)),

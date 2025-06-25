@@ -4,7 +4,6 @@ use crate::{
 };
 use rust_decimal::Decimal;
 use chrono::Utc;
-use std::cmp::min;
 
 pub struct ScoringAlgorithm {
     weights: ScoringWeights,

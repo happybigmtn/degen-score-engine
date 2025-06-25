@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, warn};
 use chrono::Utc;
-use std::collections::HashMap;
 
 pub struct ScoreCalculator {
     eth_client: Arc<EvmClient>,
@@ -106,7 +105,7 @@ impl ScoreCalculator {
         opt_address: Option<String>,
         blast_address: Option<String>,
         sol_address: Option<String>,
-    ) -> Result<crate::models::score::DegenScore> {
+    ) -> Result<crate::models::DegenScore> {
         let mut all_metrics = Vec::new();
         
         // Fetch metrics from each chain in parallel
@@ -165,32 +164,15 @@ impl ScoreCalculator {
         let score_result = self.algorithm.calculate_score(&aggregated);
         let total_score = score_result.total_score;
         
-        // Convert breakdown to HashMap<String, f64>
-        let mut breakdown_map = HashMap::new();
-        breakdown_map.insert("Trading".to_string(), score_result.breakdown.trading_score);
-        breakdown_map.insert("Gambling".to_string(), score_result.breakdown.gambling_score);
-        breakdown_map.insert("DeFi Activity".to_string(), score_result.breakdown.defi_activity_score);
-        breakdown_map.insert("NFT Portfolio".to_string(), score_result.breakdown.nft_portfolio_score);
-        breakdown_map.insert("Longevity".to_string(), score_result.breakdown.longevity_score);
-        breakdown_map.insert("Risk Profile".to_string(), score_result.breakdown.risk_profile_score);
         
-        let tier = crate::models::score::DegenScore::tier_from_score(total_score).to_string();
-        let airdrop_eligible = total_score >= 20.0;
-        let airdrop_allocation = if airdrop_eligible {
-            Some(total_score * 100.0) // Simple allocation formula
-        } else {
-            None
-        };
+        let tier = crate::models::ScoreTier::from_score(total_score);
         
-        Ok(crate::models::score::DegenScore {
-            user_id: user_id.to_string(),
+        Ok(crate::models::DegenScore {
             total_score,
             percentile: 0.0, // Would calculate from database in production
-            breakdown: breakdown_map,
+            breakdown: score_result.breakdown,
             calculated_at: Utc::now(),
             tier,
-            airdrop_eligible,
-            airdrop_allocation,
         })
     }
 }

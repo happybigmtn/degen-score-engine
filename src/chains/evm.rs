@@ -17,6 +17,7 @@ use crate::{
         TransactionSummary, DegenScoreError, Result, TokenType,
         ProtocolInteraction, ProtocolType, EVMTransaction, EVMTokenTransfer,
         chain_data::{ProtocolAddresses, EventSignatures, KnownTokens},
+        CasinoInteraction, CasinoPlatform, InteractionType, CasinoMetrics,
     },
     chains::{ChainClient, client::{ProtocolMetrics, ChainClientConfig}},
 };
@@ -312,6 +313,142 @@ impl EvmClient {
         }
     }
     
+    async fn check_aave_activity(&self, address: &Address) -> Result<bool> {
+        let aave_pool = match self.chain {
+            Chain::Ethereum => ProtocolAddresses::AAVE_V2_POOL_ETH,
+            Chain::Arbitrum => ProtocolAddresses::AAVE_V3_POOL_ARB,
+            Chain::Optimism => ProtocolAddresses::AAVE_V3_POOL_OPT,
+            _ => return Ok(false),
+        };
+        
+        let pool_addr = Address::from_str(aave_pool)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Aave pool address".to_string()))?;
+            
+        // Check for Deposit events
+        let deposit_topic = H256::from_slice(
+            &ethers::core::utils::keccak256(EventSignatures::AAVE_DEPOSIT.as_bytes())
+        );
+        
+        let current_block = self.provider.get_block_number().await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get current block: {}", e),
+            })?;
+        
+        let from_block = current_block.saturating_sub(U64::from(100_000));
+        
+        // Check if user deposited (onBehalfOf parameter)
+        let filter = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(pool_addr)
+            .topic0(deposit_topic);
+            
+        let logs = self.provider.get_logs(&filter).await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get Aave logs: {}", e),
+            })?;
+            
+        // Check if any logs have the user address as onBehalfOf (5th parameter)
+        for log in logs {
+            if log.topics.len() >= 2 && log.data.len() >= 160 {
+                // onBehalfOf is in the data field (5th parameter)
+                let on_behalf_of_bytes = &log.data[128..160];
+                let on_behalf_of = Address::from_slice(&on_behalf_of_bytes[12..]);
+                if on_behalf_of == *address {
+                    return Ok(true);
+                }
+            }
+        }
+        
+        // Also check for Borrow events
+        let borrow_topic = H256::from_slice(
+            &ethers::core::utils::keccak256(EventSignatures::AAVE_BORROW.as_bytes())
+        );
+        
+        let filter_borrow = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(pool_addr)
+            .topic0(borrow_topic)
+            .topic2(*address); // borrower is indexed
+            
+        let borrow_logs = self.provider.get_logs(&filter_borrow).await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get Aave borrow logs: {}", e),
+            })?;
+            
+        Ok(!borrow_logs.is_empty())
+    }
+    
+    async fn check_compound_activity(&self, address: &Address) -> Result<bool> {
+        if self.chain != Chain::Ethereum {
+            return Ok(false); // Compound is mainly on Ethereum
+        }
+        
+        // Check if user holds any cTokens
+        let ctoken_addresses = vec![
+            ProtocolAddresses::COMPOUND_CDAI,
+            ProtocolAddresses::COMPOUND_CUSDC,
+            ProtocolAddresses::COMPOUND_CETH,
+        ];
+        
+        for ctoken_str in ctoken_addresses {
+            let ctoken = Address::from_str(ctoken_str)
+                .map_err(|_| DegenScoreError::ConfigError("Invalid cToken address".to_string()))?;
+                
+            let balance = self.get_token_balance(*address, ctoken).await?;
+            if balance > Decimal::ZERO {
+                return Ok(true);
+            }
+        }
+        
+        // Also check for Mint events (supplying to Compound)
+        let comptroller = Address::from_str(ProtocolAddresses::COMPOUND_COMPTROLLER)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Compound comptroller".to_string()))?;
+            
+        if self.check_contract_interaction(address, &comptroller).await? {
+            return Ok(true);
+        }
+        
+        Ok(false)
+    }
+    
+    async fn check_bridge_activity(&self, address: &Address) -> Result<u32> {
+        let mut bridge_uses = 0;
+        
+        // Check Hyperliquid bridge on Arbitrum
+        if self.chain == Chain::Arbitrum {
+            let hl_bridge = Address::from_str(ProtocolAddresses::HYPERLIQUID_BRIDGE_ARB)
+                .map_err(|_| DegenScoreError::ConfigError("Invalid Hyperliquid bridge".to_string()))?;
+                
+            if self.check_contract_interaction(address, &hl_bridge).await? {
+                bridge_uses += 1;
+            }
+        }
+        
+        // Check other bridges on Ethereum
+        if self.chain == Chain::Ethereum {
+            let bridges = vec![
+                ProtocolAddresses::HOP_BRIDGE_ETH,
+                ProtocolAddresses::ACROSS_BRIDGE_ETH,
+            ];
+            
+            for bridge_str in bridges {
+                let bridge = Address::from_str(bridge_str)
+                    .map_err(|_| DegenScoreError::ConfigError("Invalid bridge address".to_string()))?;
+                    
+                if self.check_contract_interaction(address, &bridge).await? {
+                    bridge_uses += 1;
+                }
+            }
+        }
+        
+        Ok(bridge_uses)
+    }
+    
     async fn calculate_wallet_age(&self, address: &Address) -> Result<u32> {
         // Binary search to find the first transaction efficiently
         let current_block = self.provider.get_block_number().await
@@ -393,6 +530,136 @@ impl EvmClient {
         Ok(first_tx_block)
     }
     
+    async fn check_casino_interactions(&self, address: &Address) -> Result<CasinoMetrics> {
+        let mut metrics = CasinoMetrics::default();
+        
+        // Check Rollbit interactions
+        let rollbit_lottery = Address::from_str(ProtocolAddresses::ROLLBIT_LOTTERY)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Rollbit lottery address".to_string()))?;
+        let rollbit_staking = Address::from_str(ProtocolAddresses::ROLLBIT_STAKING)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Rollbit staking address".to_string()))?;
+            
+        // Check for any transactions to Rollbit contracts
+        if self.check_contract_interaction(address, &rollbit_lottery).await? ||
+           self.check_contract_interaction(address, &rollbit_staking).await? {
+            metrics.platforms_used.insert(CasinoPlatform::Rollbit);
+            metrics.total_interactions += 1;
+        }
+        
+        // Check Shuffle interactions
+        let shuffle_router = Address::from_str(ProtocolAddresses::SHUFFLE_ROUTER)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Shuffle router address".to_string()))?;
+            
+        if self.check_contract_interaction(address, &shuffle_router).await? {
+            metrics.platforms_used.insert(CasinoPlatform::Shuffle);
+            metrics.total_interactions += 1;
+        }
+        
+        // Check for YEET token transfers as proxy for Yeet platform usage
+        let yeet_token = Address::from_str(ProtocolAddresses::YEET_TOKEN)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid YEET token address".to_string()))?;
+            
+        if self.check_token_interaction(address, &yeet_token).await? {
+            metrics.platforms_used.insert(CasinoPlatform::Yeet);
+            metrics.total_interactions += 1;
+        }
+        
+        Ok(metrics)
+    }
+    
+    async fn check_contract_interaction(&self, user_addr: &Address, contract_addr: &Address) -> Result<bool> {
+        let current_block = self.provider.get_block_number().await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get current block: {}", e),
+            })?;
+        
+        let from_block = current_block.saturating_sub(U64::from(100_000)); // Look back ~2 weeks
+        
+        // Check by looking for any events from the contract where user is involved
+        // We'll check if user has ever called the contract by looking at nonce
+        let nonce_at_block = self.provider.get_transaction_count(*user_addr, Some(from_block.into())).await
+            .unwrap_or(U256::zero());
+        let current_nonce = self.provider.get_transaction_count(*user_addr, None).await
+            .unwrap_or(U256::zero());
+            
+        // If nonce increased, user made transactions
+        if current_nonce > nonce_at_block {
+            // For a more precise check, we'd need to iterate through blocks
+            // For now, we'll check if the contract was used by looking for events
+            let filter = Filter::new()
+                .from_block(from_block)
+                .to_block(current_block)
+                .address(*contract_addr);
+                
+            let logs = self.provider.get_logs(&filter).await
+                .map_err(|e| DegenScoreError::RpcError {
+                    chain: self.chain.as_str().to_string(),
+                    message: format!("Failed to get logs: {}", e),
+                })?;
+                
+            // Check if any log involves the user address in topics
+            for log in &logs {
+                for topic in &log.topics {
+                    if topic.as_bytes().ends_with(user_addr.as_bytes()) {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        
+        Ok(false)
+    }
+    
+    async fn check_token_interaction(&self, user_addr: &Address, token_addr: &Address) -> Result<bool> {
+        // Check if user has ever received or sent this token
+        let transfer_topic = H256::from_slice(
+            &ethers::core::utils::keccak256(EventSignatures::ERC20_TRANSFER.as_bytes())
+        );
+        
+        let current_block = self.provider.get_block_number().await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get current block: {}", e),
+            })?;
+        
+        let from_block = current_block.saturating_sub(U64::from(100_000));
+        
+        // Check transfers involving the user
+        let filter = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(*token_addr)
+            .topic0(transfer_topic)
+            .topic1(*user_addr); // User as sender
+            
+        let logs_from = self.provider.get_logs(&filter).await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get logs: {}", e),
+            })?;
+            
+        if !logs_from.is_empty() {
+            return Ok(true);
+        }
+        
+        // Check user as recipient
+        let filter_to = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(*token_addr)
+            .topic0(transfer_topic)
+            .topic2(*user_addr); // User as recipient
+            
+        let logs_to = self.provider.get_logs(&filter_to).await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get logs: {}", e),
+            })?;
+        
+        Ok(!logs_to.is_empty())
+    }
+    
     async fn check_protocol_interaction(&self, user_addr: &Address, protocol_addr: &Address) -> Result<bool> {
         // Check if user has interacted with a protocol by looking for transactions to that address
         let current_block = self.provider.get_block_number().await
@@ -469,6 +736,19 @@ impl ChainClient for EvmClient {
             .map(|t| &t.token_address)
             .collect();
         metrics.distinct_tokens_traded = unique_tokens.len() as u32;
+        
+        // Check for memecoin trading
+        let memecoin_addrs = KnownTokens::memecoin_addresses();
+        let mut memecoin_trades = 0;
+        for transfer in &transfers {
+            if memecoin_addrs.contains_key(transfer.token_address.to_lowercase().as_str()) {
+                memecoin_trades += 1;
+            }
+        }
+        if memecoin_trades > 0 {
+            metrics.memecoin_trades = memecoin_trades;
+            println!("Memecoin transfers detected: {}", memecoin_trades);
+        }
         
         // Calculate activity days from transfer timestamps
         let mut activity_days = std::collections::HashSet::new();
@@ -552,11 +832,48 @@ impl ChainClient for EvmClient {
         match self.check_casino_tokens(&addr).await {
             Ok(casino_tokens) => {
                 metrics.casino_tokens_held = casino_tokens.clone();
-                metrics.casinos_used = casino_tokens.len() as u32;
                 println!("Casino tokens: {}", casino_tokens.len());
             }
             Err(e) => {
                 println!("Failed to fetch casino tokens: {}", e);
+            }
+        }
+        
+        // Check casino platform interactions (not just token holdings)
+        match self.check_casino_interactions(&addr).await {
+            Ok(casino_metrics) => {
+                metrics.casinos_used = casino_metrics.platforms_used.len() as u32;
+                println!("Casino platforms used: {}", metrics.casinos_used);
+                for platform in &casino_metrics.platforms_used {
+                    println!("  - {:?}", platform);
+                }
+            }
+            Err(e) => {
+                println!("Failed to check casino interactions: {}", e);
+            }
+        }
+        
+        // Check DeFi lending protocols
+        if self.check_aave_activity(&addr).await.unwrap_or(false) {
+            metrics.defi_protocols_used += 1;
+            println!("Found Aave activity");
+        }
+        
+        if self.check_compound_activity(&addr).await.unwrap_or(false) {
+            metrics.defi_protocols_used += 1;
+            println!("Found Compound activity");
+        }
+        
+        // Check bridge usage
+        match self.check_bridge_activity(&addr).await {
+            Ok(bridge_count) => {
+                if bridge_count > 0 {
+                    metrics.hyperliquid_deposits = bridge_count;
+                    println!("Bridge interactions: {}", bridge_count);
+                }
+            }
+            Err(e) => {
+                println!("Failed to check bridge activity: {}", e);
             }
         }
         

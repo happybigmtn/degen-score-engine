@@ -133,6 +133,22 @@ impl Default for Settings {
     }
 }
 
+impl Default for ScoringWeights {
+    fn default() -> Self {
+        Self {
+            trading_volume: 15.0,
+            trading_count: 10.0,
+            gambling_platforms: 10.0,
+            casino_tokens: 5.0,
+            defi_protocols: 10.0,
+            token_diversity: 5.0,
+            nft_holdings: 10.0,
+            wallet_age: 10.0,
+            activity_consistency: 10.0,
+        }
+    }
+}
+
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let mut s = Config::builder()

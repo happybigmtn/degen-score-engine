@@ -12,6 +12,8 @@ use tracing::{info, error};
 use tracing_subscriber;
 use chrono::Utc;
 
+mod tui_main;
+
 #[derive(Parser)]
 #[clap(name = "degen-scorer")]
 #[clap(about = "Calculate Degen Scores for crypto users", long_about = None)]
@@ -312,8 +314,6 @@ async fn main() -> anyhow::Result<()> {
         }
         
         Commands::Tui => {
-            // Import the TUI module
-            mod tui_main;
             tui_main::run_tui().await?;
         }
     }

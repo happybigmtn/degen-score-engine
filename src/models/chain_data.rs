@@ -42,6 +42,22 @@ impl ProtocolAddresses {
     pub const WINR_TOKEN: &'static str = "0xD77B108d4f6cefaa0Cae9506A934e825BEccA46E"; // WINR Protocol
     pub const CHIPS_TOKEN: &'static str = "0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F"; // ChipBets
     
+    // DeFi Lending Protocols
+    pub const AAVE_V2_POOL_ETH: &'static str = "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9";
+    pub const AAVE_V3_POOL_ARB: &'static str = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
+    pub const AAVE_V3_POOL_OPT: &'static str = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
+    
+    // Compound Protocol
+    pub const COMPOUND_COMPTROLLER: &'static str = "0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B";
+    pub const COMPOUND_CDAI: &'static str = "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643";
+    pub const COMPOUND_CUSDC: &'static str = "0x39AA39c021dfbaE8faC545936693aC917d5E7563";
+    pub const COMPOUND_CETH: &'static str = "0x4Ddc2D193948926D02f9B1fE9e1daa0718270ED5";
+    
+    // Bridges
+    pub const HYPERLIQUID_BRIDGE_ARB: &'static str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
+    pub const HOP_BRIDGE_ETH: &'static str = "0x3666f603Cc164936C1b87e207F36BEBa4AC5f18a";
+    pub const ACROSS_BRIDGE_ETH: &'static str = "0x4D9079Bb4165aeb4084c526a32695dCfd2F77381";
+    
     // Uniswap V2/V3 routers (all chains)
     pub const UNISWAP_V2_ROUTER: &'static str = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
     pub const UNISWAP_V3_ROUTER: &'static str = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
@@ -203,8 +219,25 @@ impl KnownTokens {
     pub fn memecoins() -> Vec<&'static str> {
         vec![
             "PEPE", "DOGE", "SHIB", "FLOKI", "ELON", "SAFEMOON",
-            "BABYDOGE", "AKITA", "KISHU", "HOKK", "FEG", "PIG"
+            "BABYDOGE", "AKITA", "KISHU", "HOKK", "FEG", "PIG",
+            "WOJAK", "TURBO", "LADYS", "BOB", "PSYOP", "MONG",
+            "JEFF", "BEN", "AIDOGE", "SPONGE", "WAGMI", "COPE"
         ]
+    }
+    
+    pub fn memecoin_addresses() -> HashMap<&'static str, &'static str> {
+        [
+            // Ethereum memecoins
+            ("0x6982508145454Ce325dDbE47a25d4ec3d2311933", "PEPE"),
+            ("0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", "SHIB"),
+            ("0x761D38e5ddf6ccf6Cf7c55759d5210750B5D60F3", "ELON"),
+            ("0xD29DA236dd4AAc627346e1bBa06A619E8c22d7C5", "MONG"),
+            ("0x5026F006B85729a8b14553FAE6af249aD16c9aaB", "WOJAK"),
+            ("0xA0b73E1Ff0B80914AB6fe0444E65848C4C34450b", "TURBO"),
+            ("0x12970E6868f88f6557B76120662c1B3E50A646bf", "LADYS"),
+            // Arbitrum memecoins
+            ("0x09E18590E8f76b6Cf471b3cd75fE1A1a9D2B2c2b", "AIDOGE"),
+        ].iter().cloned().collect()
     }
 }
 
@@ -217,4 +250,17 @@ impl EventSignatures {
     pub const UNISWAP_SWAP: &'static str = "Swap(address,uint256,uint256,uint256,uint256,address)";
     pub const GMX_INCREASE_POSITION: &'static str = "IncreasePosition(bytes32,address,address,address,uint256,uint256,bool,uint256,uint256)";
     pub const GMX_DECREASE_POSITION: &'static str = "DecreasePosition(bytes32,address,address,address,uint256,uint256,bool,uint256,uint256)";
+    
+    // Aave events
+    pub const AAVE_DEPOSIT: &'static str = "Deposit(address,address,address,uint256,address,uint16)";
+    pub const AAVE_BORROW: &'static str = "Borrow(address,address,address,uint256,uint256,uint256,uint16)";
+    pub const AAVE_LIQUIDATION: &'static str = "LiquidationCall(address,address,address,uint256,uint256,address,bool)";
+    
+    // Compound events
+    pub const COMPOUND_MINT: &'static str = "Mint(address,uint256,uint256)";
+    pub const COMPOUND_BORROW: &'static str = "Borrow(address,uint256,uint256,uint256)";
+    
+    // Casino events
+    pub const ROLLBIT_BET: &'static str = "BetPlaced(address,uint256,uint256)";
+    pub const SHUFFLE_DEPOSIT: &'static str = "Deposit(address,uint256)";
 }

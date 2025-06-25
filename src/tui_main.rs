@@ -56,6 +56,14 @@ async fn run_app<B: ratatui::backend::Backend>(
     calculator: Arc<ScoreCalculator>,
 ) -> Result<()> {
     loop {
+        // Check if we should quit
+        {
+            let app_guard = app.lock().await;
+            if app_guard.should_quit {
+                return Ok(());
+            }
+        }
+        
         // Draw UI
         {
             let app = app.lock().await;
@@ -65,41 +73,42 @@ async fn run_app<B: ratatui::backend::Backend>(
         // Handle events
         match events.next()? {
             TuiEvent::Key(key) => {
-                let mut app = app.lock().await;
+                let mut app_guard = app.lock().await;
                 
-                match app.current_screen {
+                match app_guard.current_screen {
                     degen_scorer::tui::app::Screen::Main => {
-                        match app.input_mode {
+                        match app_guard.input_mode {
                             degen_scorer::tui::app::InputMode::Normal => {
                                 match key.code {
                                     KeyCode::Char('q') => {
-                                        app.should_quit = true;
+                                        app_guard.should_quit = true;
                                     }
                                     KeyCode::Char('a') => {
-                                        app.input_mode = degen_scorer::tui::app::InputMode::AddingAddress;
-                                        app.current_input.clear();
+                                        app_guard.input_mode = degen_scorer::tui::app::InputMode::AddingAddress;
+                                        app_guard.current_input.clear();
                                     }
                                     KeyCode::Up => {
-                                        app.move_selection_up();
+                                        app_guard.move_selection_up();
                                     }
                                     KeyCode::Down => {
-                                        app.move_selection_down();
+                                        app_guard.move_selection_down();
                                     }
                                     KeyCode::Delete => {
-                                        app.remove_selected_address();
+                                        app_guard.remove_selected_address();
                                     }
                                     KeyCode::Enter => {
-                                        if !app.addresses.is_empty() {
+                                        if !app_guard.addresses.is_empty() {
                                             // Calculate score
-                                            app.set_loading("Fetching blockchain data...");
+                                            app_guard.set_loading("Fetching blockchain data...");
                                             
-                                            let addresses = app.get_addresses_by_chain();
-                                            let user_id = app.user_id.clone();
+                                            let addresses = app_guard.get_addresses_by_chain();
+                                            let user_id = app_guard.user_id.clone();
                                             let calculator = calculator.clone();
-                                            let app_clone = app.clone();
                                             
                                             // Drop the lock before spawning
-                                            drop(app);
+                                            drop(app_guard);
+                                            
+                                            let app_clone = Arc::clone(&app);
                                             
                                             tokio::spawn(async move {
                                                 match calculate_score(calculator, user_id, addresses).await {
@@ -113,6 +122,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                                     }
                                                 }
                                             });
+                                            
+                                            continue;
                                         }
                                     }
                                     _ => {}
@@ -121,20 +132,20 @@ async fn run_app<B: ratatui::backend::Backend>(
                             degen_scorer::tui::app::InputMode::AddingAddress => {
                                 match key.code {
                                     KeyCode::Esc => {
-                                        app.input_mode = degen_scorer::tui::app::InputMode::Normal;
-                                        app.current_input.clear();
+                                        app_guard.input_mode = degen_scorer::tui::app::InputMode::Normal;
+                                        app_guard.current_input.clear();
                                     }
                                     KeyCode::Enter => {
-                                        app.add_address();
+                                        app_guard.add_address();
                                     }
                                     KeyCode::Char(c) => {
-                                        app.current_input.push(c);
+                                        app_guard.current_input.push(c);
                                     }
                                     KeyCode::Backspace => {
-                                        app.current_input.pop();
+                                        app_guard.current_input.pop();
                                     }
                                     KeyCode::Tab => {
-                                        app.toggle_chain();
+                                        app_guard.toggle_chain();
                                     }
                                     _ => {}
                                 }
@@ -144,10 +155,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     degen_scorer::tui::app::Screen::Results => {
                         match key.code {
                             KeyCode::Char('b') => {
-                                app.back_to_main();
+                                app_guard.back_to_main();
                             }
                             KeyCode::Char('q') => {
-                                app.should_quit = true;
+                                app_guard.should_quit = true;
                             }
                             _ => {}
                         }
@@ -155,10 +166,6 @@ async fn run_app<B: ratatui::backend::Backend>(
                     degen_scorer::tui::app::Screen::Loading => {
                         // Don't respond to keys while loading
                     }
-                }
-                
-                if app.should_quit {
-                    return Ok(());
                 }
             }
             TuiEvent::Resize(_, _) => {
