@@ -1,0 +1,51 @@
+# Degen Scorer Default Configuration
+
+[app]
+name = "Degen Scorer"
+version = "0.1.0"
+log_level = "info"
+environment = "Development"
+
+[scoring]
+min_score_for_airdrop = 20.0
+airdrop_pool_percentage = 50.0
+wagering_requirement_multiplier = 100
+
+[scoring.weights]
+# These must sum to 100 (risk profile is calculated separately)
+trading_volume = 15.0
+trading_count = 10.0
+gambling_platforms = 10.0
+casino_tokens = 5.0
+defi_protocols = 10.0
+token_diversity = 5.0
+nft_holdings = 10.0
+wallet_age = 10.0
+activity_consistency = 25.0
+
+[scoring.thresholds]
+max_trading_volume_usd = 10000000.0  # $10M
+max_trades_count = 100
+max_protocols_count = 20
+max_nft_count = 50
+max_wallet_age_days = 1825  # 5 years
+
+[database]
+url = "sqlite://degen_scores.db"
+max_connections = 10
+min_connections = 1
+connect_timeout_seconds = 30
+
+[cache]
+ttl_seconds = 900  # 15 minutes
+max_entries = 10000
+enable_persistence = true
+
+[api]
+host = "0.0.0.0"
+port = 8080
+cors_origins = ["*"]
+max_request_size_mb = 10
+
+# RPC endpoints are configured in code
+# See src/config/rpc.rs for the full list
