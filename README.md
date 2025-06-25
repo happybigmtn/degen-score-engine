@@ -36,8 +36,8 @@ The Degen Score is calculated across 6 weighted categories (100 points total):
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/degen-scorer.git
-cd degen-scorer
+git clone https://github.com/happybigmtn/degen-score-engine.git
+cd degen-score-engine
 
 # Build the project
 cargo build --release
