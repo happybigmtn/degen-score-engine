@@ -15,6 +15,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Main => draw_main_screen(frame, app),
         Screen::Results => draw_results_screen(frame, app),
         Screen::Loading => draw_loading_screen(frame, app),
+        Screen::Error => draw_error_screen(frame, app),
     }
 }
 
@@ -279,4 +280,42 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn draw_error_screen(frame: &mut Frame, app: &App) {
+    let area = centered_rect(80, 30, frame.size());
+    
+    let error_message = app.error_message.as_deref().unwrap_or("Unknown error occurred");
+    
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("🚨 Error", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        ]),
+        Line::from(""),
+        Line::from(error_message),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" to continue or "),
+            Span::styled("q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(" to quit"),
+        ]),
+        Line::from(""),
+    ];
+    
+    let error_popup = Paragraph::new(text)
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))
+                .title("Error")
+        );
+    
+    frame.render_widget(Clear, area);
+    frame.render_widget(error_popup, area);
 }

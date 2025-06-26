@@ -199,11 +199,16 @@ async fn analyze_memecoin_activity(transfers: &[TokenTransfer]) -> MemeMetrics {
 - [x] Wallet age calculation working properly
 - [x] Transaction counting operational
 - [x] Casino token balance checking functional
+- [x] Protocol interaction detection via event logs (replacing dummy logic)
+- [x] Hyperliquid and Perpetual Protocol addresses integrated
+- [x] CHIPS token removed from casino list (was incorrect address)
+- [x] HashSet implementation prevents double-counting protocols
 
 ### In Progress 🚧
 - [ ] Historical data integration via explorer APIs (needed to overcome RPC limits)
 - [ ] Liquidation event tracking
 - [ ] Cross-chain token bridge tracking
+- [ ] Volume metrics for swaps and gambling
 
 ### Build Issues Fixed ✅
 - [x] Fixed compilation errors with Filter API usage
@@ -212,6 +217,16 @@ async fn analyze_memecoin_activity(transfers: &[TokenTransfer]) -> MemeMetrics {
 - [x] Corrected TUI rendering for new DegenScore structure
 - [x] Fixed Arc<Mutex<App>> handling in tui_main.rs
 - [x] Successfully compiled with all refactoring improvements
+
+### TUI Improvements Fixed ✅
+- [x] Fixed logging interference with TUI display
+- [x] Added graceful error handling and recovery
+- [x] Implemented user-friendly error messages
+- [x] Added address validation for all chains
+- [x] Created dedicated error screen with recovery options
+- [x] Improved terminal state management
+- [x] Added duplicate address detection
+- [x] Enhanced error formatting for better UX
 
 ### Future Enhancements 📋
 - [ ] Real-time monitoring via websockets

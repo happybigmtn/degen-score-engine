@@ -23,6 +23,13 @@ impl ProtocolAddresses {
     pub const JUPITER_V4: &'static str = "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB";
     pub const JUPITER_V6: &'static str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
     
+    // Hyperliquid on Arbitrum
+    pub const HYPERLIQUID_BRIDGE_ARB: &'static str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
+    
+    // Perpetual Protocol on Optimism
+    pub const PERP_CLEARING_HOUSE_OPT: &'static str = "0x82ac2CE43e33583Cd50c42a43B7b4a525F0459Bc";
+    pub const PERP_VAULT_OPT: &'static str = "0xAD7b4C162707E0B2b5f6fdDbD3f8538A620C6CB4";
+    
     // Casino tokens and platforms
     pub const RLB_TOKEN_ETH: &'static str = "0x046EeE2cc3188071C02BfC1745A6b17c656e3f3d";
     pub const SHFL_TOKEN_ETH: &'static str = "0x8881562783028F5c1BCB985d2283D5E170D88888";
@@ -39,8 +46,8 @@ impl ProtocolAddresses {
     pub const YEET_TOKEN: &'static str = "0x89581561f1F98584F88b0d57c2180fb89225388f";
     
     // Other gambling/casino platforms
-    pub const WINR_TOKEN: &'static str = "0xD77B108d4f6cefaa0Cae9506A934e825BEccA46E"; // WINR Protocol
-    pub const CHIPS_TOKEN: &'static str = "0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F"; // ChipBets
+    pub const WINR_TOKEN: &'static str = "0xD77B108d4f6cefaa0Cae9506A934e825BEccA46E"; // WINR Protocol on Arbitrum
+    // Note: CHIPS token address needs verification - previous address was incorrect (LP pool)
     
     // DeFi Lending Protocols
     pub const AAVE_V2_POOL_ETH: &'static str = "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9";
@@ -54,7 +61,6 @@ impl ProtocolAddresses {
     pub const COMPOUND_CETH: &'static str = "0x4Ddc2D193948926D02f9B1fE9e1daa0718270ED5";
     
     // Bridges
-    pub const HYPERLIQUID_BRIDGE_ARB: &'static str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
     pub const HOP_BRIDGE_ETH: &'static str = "0x3666f603Cc164936C1b87e207F36BEBa4AC5f18a";
     pub const ACROSS_BRIDGE_ETH: &'static str = "0x4D9079Bb4165aeb4084c526a32695dCfd2F77381";
     
@@ -193,7 +199,6 @@ impl KnownTokens {
             ("0x046EeE2cc3188071C02BfC1745A6b17c656e3f3d", "RLB"),
             ("0x8881562783028F5c1BCB985d2283D5E170D88888", "SHFL"),
             ("0x89581561f1F98584F88b0d57c2180fb89225388f", "YEET"),
-            ("0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F", "CHIPS"),
             // Arbitrum
             ("0x1bE3735Dd0C0Eb229fB11094B6c277192349EBbf", "RLB"),
             ("0xD77B108d4f6cefaa0Cae9506A934e825BEccA46E", "WINR"),
@@ -206,7 +211,6 @@ impl KnownTokens {
                 ("0x046EeE2cc3188071C02BfC1745A6b17c656e3f3d", "RLB"),
                 ("0x8881562783028F5c1BCB985d2283D5E170D88888", "SHFL"),
                 ("0x89581561f1F98584F88b0d57c2180fb89225388f", "YEET"),
-                ("0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F", "CHIPS"),
             ].iter().cloned().collect(),
             Chain::Arbitrum => [
                 ("0x1bE3735Dd0C0Eb229fB11094B6c277192349EBbf", "RLB"),

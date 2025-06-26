@@ -12,6 +12,7 @@ pub enum Screen {
     Main,
     Results,
     Loading,
+    Error,
 }
 
 pub struct AddressEntry {
@@ -57,15 +58,56 @@ impl App {
     }
 
     pub fn add_address(&mut self) {
-        if !self.current_input.trim().is_empty() {
-            self.addresses.push(AddressEntry {
-                chain: self.selected_chain.clone(),
-                address: self.current_input.trim().to_string(),
-            });
-            self.current_input.clear();
-            self.input_mode = InputMode::Normal;
-            self.error_message = None;
+        let address = self.current_input.trim();
+        if address.is_empty() {
+            self.error_message = Some("Address cannot be empty".to_string());
+            return;
         }
+
+        // Basic address validation
+        if let Err(err) = self.validate_address(address, &self.selected_chain) {
+            self.error_message = Some(err);
+            return;
+        }
+
+        // Check for duplicates
+        if self.addresses.iter().any(|entry| entry.address == address && entry.chain == self.selected_chain) {
+            self.error_message = Some("Address already added for this chain".to_string());
+            return;
+        }
+
+        self.addresses.push(AddressEntry {
+            chain: self.selected_chain.clone(),
+            address: address.to_string(),
+        });
+        self.current_input.clear();
+        self.input_mode = InputMode::Normal;
+        self.error_message = None;
+    }
+
+    fn validate_address(&self, address: &str, chain: &Chain) -> Result<(), String> {
+        match chain {
+            Chain::Ethereum | Chain::Arbitrum | Chain::Optimism | Chain::Blast => {
+                if !address.starts_with("0x") {
+                    return Err("EVM address must start with 0x".to_string());
+                }
+                if address.len() != 42 {
+                    return Err("EVM address must be 42 characters long".to_string());
+                }
+                if !address[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err("EVM address must contain only hex characters".to_string());
+                }
+            }
+            Chain::Solana => {
+                if address.len() < 32 || address.len() > 44 {
+                    return Err("Solana address must be 32-44 characters long".to_string());
+                }
+                if !address.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    return Err("Solana address contains invalid characters".to_string());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn remove_selected_address(&mut self) {
@@ -118,6 +160,16 @@ impl App {
     pub fn set_error(&mut self, error: &str) {
         self.error_message = Some(error.to_string());
         self.loading_message = None;
+        // For serious errors, show error screen; for minor ones, stay on main
+        if error.contains("Failed to") || error.contains("Network") || error.contains("Connection") {
+            self.current_screen = Screen::Error;
+        } else {
+            self.current_screen = Screen::Main;
+        }
+    }
+
+    pub fn clear_error(&mut self) {
+        self.error_message = None;
         self.current_screen = Screen::Main;
     }
 
