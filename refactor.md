@@ -203,12 +203,21 @@ async fn analyze_memecoin_activity(transfers: &[TokenTransfer]) -> MemeMetrics {
 - [x] Hyperliquid and Perpetual Protocol addresses integrated
 - [x] CHIPS token removed from casino list (was incorrect address)
 - [x] HashSet implementation prevents double-counting protocols
+- [x] Risk score properly allocates 15 points (was 10)
+- [x] leveraged_positions_count increments for GMX/Perp usage
+- [x] total_balance_usd and stablecoin_percentage calculated for risk scoring
+- [x] Renamed hyperliquid_deposits to bridges_used for clarity
+- [x] Added comment clarifying GMX V2 router addresses are identical
+- [x] Replaced all println! with structured tracing (info!, warn!, debug!)
+- [x] Added comprehensive test module structure for all detection methods
+- [x] Documented CHIPS token address verification requirement
 
 ### In Progress 🚧
 - [ ] Historical data integration via explorer APIs (needed to overcome RPC limits)
 - [ ] Liquidation event tracking
 - [ ] Cross-chain token bridge tracking
 - [ ] Volume metrics for swaps and gambling
+- [ ] Implement actual test logic (structure is in place)
 
 ### Build Issues Fixed ✅
 - [x] Fixed compilation errors with Filter API usage

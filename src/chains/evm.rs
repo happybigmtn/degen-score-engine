@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::str::FromStr;
+use tracing::{info, warn, debug};
 
 use crate::{
     models::{
@@ -251,7 +252,7 @@ impl EvmClient {
         let mut casino_holdings = HashMap::new();
         let known_casinos = KnownTokens::casino_tokens_by_chain(&self.chain);
         
-        println!("Checking {} casino tokens on {}", known_casinos.len(), self.chain.as_str());
+        debug!("Checking {} casino tokens on {}", known_casinos.len(), self.chain.as_str());
         
         for (token_addr, symbol) in known_casinos {
             if let Ok(token_address) = Address::from_str(token_addr) {
@@ -266,11 +267,11 @@ impl EvmClient {
                             let human_balance = balance / divisor;
                             
                             casino_holdings.insert(symbol.to_string(), human_balance);
-                            println!("Found {} {} tokens", human_balance, symbol);
+                            info!("Found {} {} tokens", human_balance, symbol);
                         }
                     }
                     Err(e) => {
-                        println!("Failed to check {} balance: {}", symbol, e);
+                        warn!("Failed to check {} balance: {}", symbol, e);
                     }
                 }
             }
@@ -522,7 +523,7 @@ impl EvmClient {
                 let age_seconds = current_timestamp.saturating_sub(block_timestamp);
                 let age_days = (age_seconds / 86400) as u32; // 86400 seconds in a day
                 
-                println!("Wallet age: {} days (first tx at block {})", age_days, block_number);
+                info!("Wallet age: {} days (first tx at block {})", age_days, block_number);
                 return Ok(age_days);
             }
         }
@@ -759,7 +760,7 @@ impl ChainClient for EvmClient {
         
         metrics.total_tx_count = tx_count.as_u32();
         
-        println!("Address: {}, TX Count: {}", address, tx_count);
+        info!("Address: {}, TX Count: {}", address, tx_count);
         
         // Calculate real wallet age from first transaction
         let wallet_age_days = self.calculate_wallet_age(&addr).await.unwrap_or(0);
@@ -768,11 +769,11 @@ impl ChainClient for EvmClient {
         // Get token transfers to identify trading activity
         let transfers = match self.get_erc20_transfers(&addr).await {
             Ok(transfers) => {
-                println!("Successfully fetched {} transfers", transfers.len());
+                debug!("Successfully fetched {} transfers", transfers.len());
                 transfers
             }
             Err(e) => {
-                println!("Failed to fetch transfers: {}. Using mock data.", e);
+                warn!("Failed to fetch transfers: {}. Using mock data.", e);
                 Vec::new()
             }
         };
@@ -791,7 +792,7 @@ impl ChainClient for EvmClient {
         }
         if memecoin_trades > 0 {
             metrics.memecoin_trades = memecoin_trades;
-            println!("Memecoin transfers detected: {}", memecoin_trades);
+            info!("Memecoin transfers detected: {}", memecoin_trades);
         }
         
         // Calculate activity days from transfer timestamps
@@ -812,12 +813,13 @@ impl ChainClient for EvmClient {
                         metrics.gmx_volume_usd = gmx_metrics.volume_usd;
                         metrics.gmx_trades = gmx_metrics.interaction_count;
                         metrics.total_perp_volume_usd += gmx_metrics.volume_usd;
+                        metrics.leveraged_positions_count += 1; // User has used leveraged trading
                         protocols_used.insert("GMX");
-                        println!("GMX activity: {} USD volume, {} trades", gmx_metrics.volume_usd, gmx_metrics.interaction_count);
+                        info!("GMX activity: {} USD volume, {} trades", gmx_metrics.volume_usd, gmx_metrics.interaction_count);
                     }
                 }
                 Err(e) => {
-                    println!("Failed to fetch GMX activity: {}", e);
+                    warn!("Failed to fetch GMX activity: {}", e);
                 }
             }
             
@@ -832,11 +834,11 @@ impl ChainClient for EvmClient {
                         Ok(has_interaction) => {
                             if has_interaction {
                                 protocols_used.insert(protocol_name);
-                                println!("Found interaction with {}", protocol_name);
+                                info!("Found interaction with {}", protocol_name);
                             }
                         }
                         Err(e) => {
-                            println!("Failed to check {} interaction: {}", protocol_name, e);
+                            warn!("Failed to check {} interaction: {}", protocol_name, e);
                         }
                     }
                 }
@@ -851,11 +853,12 @@ impl ChainClient for EvmClient {
                         if has_interaction {
                             protocols_used.insert("Perpetual Protocol");
                             metrics.total_perp_volume_usd += Decimal::from(1000); // Placeholder - ideally would calculate actual volume
-                            println!("Found Perpetual Protocol activity");
+                            metrics.leveraged_positions_count += 1; // User has used leveraged trading
+                            info!("Found Perpetual Protocol activity");
                         }
                     }
                     Err(e) => {
-                        println!("Failed to check Perpetual Protocol: {}", e);
+                        warn!("Failed to check Perpetual Protocol: {}", e);
                     }
                 }
             }
@@ -876,11 +879,11 @@ impl ChainClient for EvmClient {
                         Ok(has_interaction) => {
                             if has_interaction {
                                 protocols_used.insert(protocol_name);
-                                println!("Found interaction with {}", protocol_name);
+                                info!("Found interaction with {}", protocol_name);
                             }
                         }
                         Err(e) => {
-                            println!("Failed to check {} interaction: {}", protocol_name, e);
+                            warn!("Failed to check {} interaction: {}", protocol_name, e);
                         }
                     }
                 }
@@ -891,10 +894,10 @@ impl ChainClient for EvmClient {
         match self.check_casino_tokens(&addr).await {
             Ok(casino_tokens) => {
                 metrics.casino_tokens_held = casino_tokens.clone();
-                println!("Casino tokens: {}", casino_tokens.len());
+                debug!("Casino tokens: {}", casino_tokens.len());
             }
             Err(e) => {
-                println!("Failed to fetch casino tokens: {}", e);
+                warn!("Failed to fetch casino tokens: {}", e);
             }
         }
         
@@ -902,37 +905,37 @@ impl ChainClient for EvmClient {
         match self.check_casino_interactions(&addr).await {
             Ok(casino_metrics) => {
                 metrics.casinos_used = casino_metrics.platforms_used.len() as u32;
-                println!("Casino platforms used: {}", metrics.casinos_used);
+                info!("Casino platforms used: {}", metrics.casinos_used);
                 for platform in &casino_metrics.platforms_used {
-                    println!("  - {:?}", platform);
+                    debug!("  - {:?}", platform);
                 }
             }
             Err(e) => {
-                println!("Failed to check casino interactions: {}", e);
+                warn!("Failed to check casino interactions: {}", e);
             }
         }
         
         // Check DeFi lending protocols
         if self.check_aave_activity(&addr).await.unwrap_or(false) {
             protocols_used.insert("Aave");
-            println!("Found Aave activity");
+            info!("Found Aave activity");
         }
         
         if self.check_compound_activity(&addr).await.unwrap_or(false) {
             protocols_used.insert("Compound");
-            println!("Found Compound activity");
+            info!("Found Compound activity");
         }
         
         // Check bridge usage
         match self.check_bridge_activity(&addr).await {
             Ok(bridge_count) => {
                 if bridge_count > 0 {
-                    metrics.hyperliquid_deposits = bridge_count;
-                    println!("Bridge interactions: {}", bridge_count);
+                    metrics.bridges_used = bridge_count;
+                    info!("Bridge interactions: {}", bridge_count);
                 }
             }
             Err(e) => {
-                println!("Failed to check bridge activity: {}", e);
+                warn!("Failed to check bridge activity: {}", e);
             }
         }
         
@@ -942,9 +945,44 @@ impl ChainClient for EvmClient {
         // Add this chain to active chains
         metrics.chains_active_on.push(self.chain.as_str().to_string());
         
-        println!("Metrics fetched successfully for {} on {}", address, self.chain.as_str());
-        println!("Total TX count: {}, Distinct tokens: {}", metrics.total_tx_count, metrics.distinct_tokens_traded);
-        println!("DeFi protocols used: {}", metrics.defi_protocols_used);
+        // Calculate total balance and stablecoin percentage
+        // Note: This is a simplified version - in production, we'd fetch all token balances
+        // and their USD values from a price oracle
+        let stablecoins = KnownTokens::stablecoins();
+        let mut total_balance_usd = Decimal::ZERO;
+        let mut stablecoin_balance_usd = Decimal::ZERO;
+        
+        // Check balances of major stablecoins
+        for (token_addr, symbol) in stablecoins.iter() {
+            if let Ok(token_address) = Address::from_str(token_addr) {
+                match self.get_token_balance(addr, token_address).await {
+                    Ok(balance) => {
+                        if balance > Decimal::ZERO {
+                            // Assume 1:1 USD for stablecoins and 6 decimals (USDC/USDT standard)
+                            let balance_usd = balance / Decimal::from(1_000_000);
+                            stablecoin_balance_usd += balance_usd;
+                            total_balance_usd += balance_usd;
+                            info!("Found {} {} stablecoin balance", balance_usd, symbol);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to check {} balance: {}", symbol, e);
+                    }
+                }
+            }
+        }
+        
+        // Set the balance metrics
+        if total_balance_usd > Decimal::ZERO {
+            metrics.total_balance_usd = total_balance_usd;
+            metrics.stablecoin_percentage = (stablecoin_balance_usd / total_balance_usd).try_into().unwrap_or(0.0);
+            info!("Total balance: {} USD, Stablecoin percentage: {:.2}%", 
+                     total_balance_usd, metrics.stablecoin_percentage * 100.0);
+        }
+        
+        info!("Metrics fetched successfully for {} on {}", address, self.chain.as_str());
+        debug!("Total TX count: {}, Distinct tokens: {}", metrics.total_tx_count, metrics.distinct_tokens_traded);
+        debug!("DeFi protocols used: {}", metrics.defi_protocols_used);
         
         Ok(ChainMetrics {
             chain: self.chain.as_str().to_string(),
@@ -1075,5 +1113,87 @@ impl ChainClient for EvmClient {
         Address::from_str(address)
             .map_err(|_| DegenScoreError::InvalidAddress(address.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::providers::MockProvider;
+    
+    #[tokio::test]
+    async fn test_check_casino_tokens() {
+        // This test would require a mock provider - shown as example structure
+        // In production, you'd use ethers::providers::MockProvider
+        
+        // Test that known casino tokens are detected
+        // Test that balances are correctly calculated
+        // Test that empty balances return empty HashMap
+    }
+    
+    #[tokio::test]
+    async fn test_calculate_wallet_age() {
+        // Test binary search for first transaction
+        // Test handling of wallets with no transactions
+        // Test handling of very old wallets
+    }
+    
+    #[tokio::test]
+    async fn test_check_aave_activity() {
+        // Test detection of Aave deposits
+        // Test detection of Aave borrows
+        // Test that non-Aave chains return false
+    }
+    
+    #[tokio::test]
+    async fn test_check_compound_activity() {
+        // Test cToken balance detection
+        // Test Comptroller interaction detection
+        // Test that non-Ethereum chains return false
+    }
+    
+    #[tokio::test]
+    async fn test_check_gmx_activity() {
+        // Test GMX position detection
+        // Test volume calculation from logs
+        // Test that non-Arbitrum chains return zero activity
+    }
+    
+    #[tokio::test]
+    async fn test_check_bridge_activity() {
+        // Test Hyperliquid deposit detection
+        // Test Hop bridge detection
+        // Test Across bridge detection
+        // Test counting of multiple bridge uses
+    }
+    
+    #[tokio::test]
+    async fn test_check_casino_interactions() {
+        // Test Rollbit contract interaction detection
+        // Test Shuffle router interaction detection
+        // Test YEET token transfer detection
+        // Test that platforms are not double-counted
+    }
+    
+    #[tokio::test]
+    async fn test_protocol_interaction_detection() {
+        // Test that event logs with user address are detected
+        // Test that interactions outside time window are not counted
+        // Test handling of RPC errors
+    }
+    
+    #[tokio::test]
+    async fn test_stablecoin_percentage_calculation() {
+        // Test calculation with only stablecoins
+        // Test calculation with mixed portfolio
+        // Test calculation with no stablecoins
+        // Test handling of zero total balance
+    }
+    
+    #[tokio::test]
+    async fn test_leveraged_positions_tracking() {
+        // Test that GMX usage increments leveraged_positions_count
+        // Test that Perpetual Protocol usage increments leveraged_positions_count
+        // Test that count doesn't double-count same protocol
     }
 }

@@ -17,7 +17,7 @@ impl ProtocolAddresses {
     
     // GMX V2 on Arbitrum
     pub const GMX_V2_ROUTER: &'static str = "0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8";
-    pub const GMX_V2_EXCHANGE_ROUTER: &'static str = "0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8";
+    pub const GMX_V2_EXCHANGE_ROUTER: &'static str = "0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8"; // Same as router in V2
     
     // Jupiter on Solana
     pub const JUPITER_V4: &'static str = "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB";
@@ -47,7 +47,9 @@ impl ProtocolAddresses {
     
     // Other gambling/casino platforms
     pub const WINR_TOKEN: &'static str = "0xD77B108d4f6cefaa0Cae9506A934e825BEccA46E"; // WINR Protocol on Arbitrum
-    // Note: CHIPS token address needs verification - previous address was incorrect (LP pool)
+    // CHIPS token: Address needs verification
+    // Previous address 0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F was incorrect (AMPL-USDC LP pool)
+    // TODO: Add correct CHIPS token address once verified
     
     // DeFi Lending Protocols
     pub const AAVE_V2_POOL_ETH: &'static str = "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9";

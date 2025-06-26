@@ -9,7 +9,7 @@ pub struct DegenMetrics {
     pub gmx_volume_usd: Decimal,
     pub gmx_trades: u32,
     pub jupiter_swaps: u32,
-    pub hyperliquid_deposits: u32,
+    pub bridges_used: u32,  // Number of bridge interactions (Hyperliquid, Hop, Across, etc.)
     pub total_perp_volume_usd: Decimal,
     
     // Gambling metrics

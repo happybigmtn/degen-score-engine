@@ -168,24 +168,24 @@ impl ScoringAlgorithm {
         // High volatility portfolio (less stablecoins = more degen)
         if metrics.total_balance_usd > Decimal::ZERO {
             let volatile_factor = 1.0 - metrics.stablecoin_percentage;
-            risk_score += volatile_factor * 2.5;
+            risk_score += volatile_factor * 3.75;
         }
         
         // Multiple chains active (cross-chain degen)
         let chains_factor = (metrics.chains_active_on.len() as f64 / 5.0).min(1.0);
-        risk_score += chains_factor * 2.5;
+        risk_score += chains_factor * 3.75;
         
         // Leveraged positions
         if metrics.leveraged_positions_count > 0 {
-            risk_score += 2.5;
+            risk_score += 3.75;
         }
         
         // Survived liquidations/rugpulls (battle-tested degen)
         if metrics.liquidations_count > 0 || metrics.rugpull_exposure_count > 0 {
-            risk_score += 2.5;
+            risk_score += 3.75;
         }
         
-        risk_score.min(10.0) // Cap at 10 points
+        risk_score.min(15.0) // Cap at 15 points as per documentation
     }
 }
 
