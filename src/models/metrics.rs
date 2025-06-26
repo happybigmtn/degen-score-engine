@@ -137,7 +137,7 @@ impl DegenMetrics {
         self.gmx_volume_usd += other.gmx_volume_usd;
         self.gmx_trades += other.gmx_trades;
         self.jupiter_swaps += other.jupiter_swaps;
-        self.hyperliquid_deposits += other.hyperliquid_deposits;
+        self.bridges_used += other.bridges_used;
         self.total_perp_volume_usd += other.total_perp_volume_usd;
         
         self.casinos_used += other.casinos_used;

@@ -209,28 +209,26 @@ mod tests {
     
     #[test]
     fn test_validate_evm_address() {
-        let verifier = WalletVerifier::new();
-        
         // Valid address
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Ethereum,
             "0x742d35Cc6634C0532925a3b844Bc9e7595f6e842"
         ).is_ok());
         
         // Invalid - no 0x prefix
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Ethereum,
             "742d35Cc6634C0532925a3b844Bc9e7595f6e842"
         ).is_err());
         
         // Invalid - wrong length
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Ethereum,
             "0x742d35Cc6634C0532925a3b844Bc9e7595f6e8"
         ).is_err());
         
         // Invalid - not hex
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Ethereum,
             "0xGGGG35Cc6634C0532925a3b844Bc9e7595f6e842"
         ).is_err());
@@ -238,22 +236,20 @@ mod tests {
     
     #[test]
     fn test_validate_solana_address() {
-        let verifier = WalletVerifier::new();
-        
         // Valid address
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Solana,
             "7VXNK6XaXQPZnqVwGHXBuCfLj9jfJzRy3aqf9PCYizv"
         ).is_ok());
         
         // Invalid - too short
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Solana,
             "7VXNK6XaXQPZ"
         ).is_err());
         
         // Invalid - too long
-        assert!(verifier.validate_address_format(
+        assert!(WalletVerifier::validate_address_format(
             &Chain::Solana,
             "7VXNK6XaXQPZnqVwGHXBuCfLj9jfJzRy3aqf9PCYizvTooLongAddress"
         ).is_err());

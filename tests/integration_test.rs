@@ -1,6 +1,7 @@
 use degen_scorer::{
     models::{DegenMetrics, Chain},
-    scoring::{ScoringAlgorithm, ScoringWeights},
+    scoring::ScoringAlgorithm,
+    config::ScoringWeights,
 };
 use rust_decimal::Decimal;
 
@@ -40,22 +41,22 @@ fn test_chain_parsing() {
 
 #[test]
 fn test_address_validation() {
-    let verifier = degen_scorer::verification::WalletVerifier::new();
+    use degen_scorer::verification::WalletVerifier;
     
     // Valid EVM address
-    assert!(verifier.validate_address_format(
+    assert!(WalletVerifier::validate_address_format(
         &Chain::Ethereum,
         "0x742d35Cc6634C0532925a3b844Bc9e7595f6e842"
     ).is_ok());
     
     // Valid Solana address
-    assert!(verifier.validate_address_format(
+    assert!(WalletVerifier::validate_address_format(
         &Chain::Solana,
         "7VXNe1r6nTqVw6TKyBzt1TNSSQqPqNcEYizv8TduLWpU"
     ).is_ok());
     
     // Invalid addresses
-    assert!(verifier.validate_address_format(
+    assert!(WalletVerifier::validate_address_format(
         &Chain::Ethereum,
         "not_an_address"
     ).is_err());
