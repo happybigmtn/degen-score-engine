@@ -68,3 +68,15 @@ spl-token = { version = "6.0", default-features = false }
 
 [dev-dependencies]
 mockall = "0.12"
+
+[[bin]]
+name = "test_scoring"
+path = "test_scoring.rs"
+
+[[bin]]
+name = "debug_test"
+path = "debug_test.rs"
+
+[[bin]]
+name = "basic_test"
+path = "basic_test.rs"

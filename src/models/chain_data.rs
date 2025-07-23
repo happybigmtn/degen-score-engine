@@ -27,7 +27,8 @@ impl ProtocolAddresses {
     pub const HYPERLIQUID_BRIDGE_ARB: &'static str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
     
     // Perpetual Protocol on Optimism
-    pub const PERP_CLEARING_HOUSE_OPT: &'static str = "0x82ac2CE43e33583Cd50c42a43B7b4a525F0459Bc";
+    // ClearingHouse proxy address verified from Optimistic Etherscan
+    pub const PERP_CLEARING_HOUSE_OPT: &'static str = "0x82ac2CE43e33683c58Be4cDC40975e73AA50f459";
     pub const PERP_VAULT_OPT: &'static str = "0xAD7b4C162707E0B2b5f6fdDbD3f8538A620C6CB4";
     
     // Casino tokens and platforms
@@ -50,6 +51,40 @@ impl ProtocolAddresses {
     // CHIPS token: Address needs verification
     // Previous address 0x49F2befF98cE62999792Ec98D0eE4Ad790E7786F was incorrect (AMPL-USDC LP pool)
     // TODO: Add correct CHIPS token address once verified
+    
+    // Gains Network (gTrade) on Arbitrum
+    pub const GAINS_TRADING_V6: &'static str = "0xcFa6Ebd475D89dB04CAd5A756fff1cB2bc5bE33C"; // gTrade V6.1 Trading contract
+    pub const GAINS_GNS_TOKEN: &'static str = "0x18c11FD286C5EC11c3b683Caa813B77f5163A122"; // GNS token on Arbitrum
+    pub const GAINS_DAI_VAULT: &'static str = "0xd85E038593d7A098614721EaE955EC2022B9B91B"; // gDAI vault
+    
+    // Level Finance on Arbitrum
+    pub const LEVEL_LVL_TOKEN: &'static str = "0xE45be3e7104A83c0faE89FAd69d6749bF3F8e59F"; // LVL token
+    pub const LEVEL_ROUTER: &'static str = "0xA5aBFB56a78D2BD4689b25B8A77fd49Bb0675874"; // Level router/RFQ
+    
+    // Curve Finance
+    pub const CURVE_REGISTRY: &'static str = "0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5"; // Pool registry on Ethereum
+    pub const CURVE_FACTORY: &'static str = "0xB9fC157394Af804a3578134A6585C0dc9cc990d4"; // Factory on Ethereum
+    pub const CURVE_3POOL: &'static str = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"; // 3Pool (USDC/USDT/DAI)
+    pub const CURVE_STETH_POOL: &'static str = "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"; // stETH pool
+    
+    // dYdX
+    pub const DYDX_PERPETUAL_V3: &'static str = "0xD54f502e184B6B739d7D27a6410a67dc462D69c8"; // Perpetual contract
+    pub const DYDX_SOLO_MARGIN: &'static str = "0x1E0447b19BB6EcFdAe1e4AE1694b0C3659614e4e"; // Solo margin protocol
+    pub const DYDX_TOKEN: &'static str = "0x92D6C1e31e14520e676a687F0a93788B716BEff5"; // DYDX token
+    
+    // OpenSea
+    pub const OPENSEA_SEAPORT: &'static str = "0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC"; // Seaport 1.5
+    pub const OPENSEA_WYVERN_EXCHANGE: &'static str = "0x7Be8076f4EA4A4AD08075C2508e481d6C946D12b"; // Legacy Wyvern
+    
+    // Additional Major DeFi
+    pub const MAKER_DAO_PROXY: &'static str = "0x9759A6Ac90977b93B58547b4A71c78317f391A28"; // DS Proxy Registry
+    pub const MAKER_CDP_MANAGER: &'static str = "0x5ef30b9986345249bc32d8928B7ee64DE9435E39"; // CDP Manager
+    pub const YEARN_REGISTRY: &'static str = "0x50c1a2eA0a861A967D9d0FFE2AE4012c2E053804"; // Yearn vault registry
+    
+    // NFT Marketplaces
+    pub const BLUR_EXCHANGE: &'static str = "0x000000000000Ad05Ccc4F10045630fb830B95127"; // Blur marketplace
+    pub const X2Y2_EXCHANGE: &'static str = "0x74312363e45DCaBA76c59ec49a7Aa8A65a67EeD3"; // X2Y2 marketplace
+    pub const LOOKSRARE_EXCHANGE: &'static str = "0x59728544B08AB483533076417FbBB2fD0B17CE3a"; // LooksRare
     
     // DeFi Lending Protocols
     pub const AAVE_V2_POOL_ETH: &'static str = "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9";
@@ -128,6 +163,15 @@ pub struct TokenBalance {
     pub decimals: u8,
     pub symbol: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenInteractionMetrics {
+    pub transfers_in: u32,
+    pub transfers_out: u32,
+    pub total_volume_raw: Decimal,
+    pub first_interaction: Option<DateTime<Utc>>,
+    pub last_interaction: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

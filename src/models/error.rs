@@ -34,6 +34,12 @@ pub enum DegenScoreError {
     
     #[error("Score calculation error: {0}")]
     ScoreCalculationError(String),
+    
+    #[error("Circuit breaker is open: {0}")]
+    CircuitBreakerOpen(String),
+    
+    #[error("Cache error: {0}")]
+    CacheError(String),
 }
 
 pub type Result<T> = std::result::Result<T, DegenScoreError>;

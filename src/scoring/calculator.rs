@@ -5,7 +5,9 @@ use crate::{
     config::Settings,
 };
 use std::sync::Arc;
-// use futures::future::join_all;  // Not needed with sequential approach
+use std::pin::Pin;
+use std::future::Future;
+use futures::future::join_all;
 use tracing::{info, warn, error};
 
 pub struct ScoreCalculator {
@@ -34,42 +36,68 @@ impl ScoreCalculator {
     pub async fn calculate_user_score(&self, user: &UserProfile) -> Result<DegenScore> {
         info!("Calculating score for user: {}", user.id);
         
-        // Aggregate metrics from all chains
-        let mut aggregated_metrics = DegenMetrics::default();
-        let mut successful_fetches = 0;
+        // Collect all futures for parallel execution
+        let mut metric_futures: Vec<Pin<Box<dyn Future<Output = Option<DegenMetrics>> + Send>>> = Vec::new();
         
-        // EVM chains
+        // EVM chains - create futures for parallel execution
         for client in &self.evm_clients {
             let chain = client.chain();
             let addresses = user.get_addresses_by_chain(chain.clone());
             
             for address in addresses {
-                match client.fetch_metrics(address).await {
-                    Ok(chain_metrics) => {
-                        aggregated_metrics.merge(&chain_metrics.metrics);
-                        successful_fetches += 1;
-                        info!("Fetched metrics for {} on {}", address, chain.as_str());
+                let client_ref = Arc::clone(client);
+                let address_owned = address.to_string();
+                let chain_name = chain.as_str().to_string();
+                
+                let future = Box::pin(async move {
+                    match client_ref.fetch_metrics(&address_owned).await {
+                        Ok(chain_metrics) => {
+                            info!("Fetched metrics for {} on {}", address_owned, chain_name);
+                            Some(chain_metrics.metrics)
+                        }
+                        Err(e) => {
+                            warn!("Failed to fetch metrics for {} on {}: {}", 
+                                address_owned, chain_name, e);
+                            None
+                        }
                     }
-                    Err(e) => {
-                        warn!("Failed to fetch metrics for {} on {}: {}", 
-                            address, chain.as_str(), e);
-                    }
-                }
+                });
+                metric_futures.push(future);
             }
         }
         
-        // Solana
+        // Solana - add to parallel futures
         let solana_addresses = user.get_addresses_by_chain(Chain::Solana);
         for address in solana_addresses {
-            match self.solana_client.fetch_metrics(address).await {
-                Ok(chain_metrics) => {
-                    aggregated_metrics.merge(&chain_metrics.metrics);
-                    successful_fetches += 1;
-                    info!("Fetched Solana metrics for {}", address);
+            let client_ref = Arc::clone(&self.solana_client);
+            let address_owned = address.to_string();
+            
+            let future = Box::pin(async move {
+                match client_ref.fetch_metrics(&address_owned).await {
+                    Ok(chain_metrics) => {
+                        info!("Fetched Solana metrics for {}", address_owned);
+                        Some(chain_metrics.metrics)
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch Solana metrics for {}: {}", address_owned, e);
+                        None
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to fetch Solana metrics for {}: {}", address, e);
-                }
+            });
+            metric_futures.push(future);
+        }
+        
+        // Execute all futures in parallel
+        let results = join_all(metric_futures).await;
+        
+        // Aggregate all successful results
+        let mut aggregated_metrics = DegenMetrics::default();
+        let mut successful_fetches = 0;
+        
+        for result in results {
+            if let Some(metrics) = result {
+                aggregated_metrics.merge(&metrics);
+                successful_fetches += 1;
             }
         }
         
@@ -79,7 +107,7 @@ impl ScoreCalculator {
             ));
         }
         
-        info!("Successfully fetched metrics from {} chains/addresses", successful_fetches);
+        info!("Successfully fetched metrics from {} chains/addresses in parallel", successful_fetches);
         
         // Calculate final score
         let score = self.algorithm.calculate_score(&aggregated_metrics);
@@ -94,14 +122,15 @@ impl ScoreCalculator {
     }
     
     pub async fn calculate_batch_scores(&self, users: &[UserProfile]) -> Vec<Result<DegenScore>> {
-        info!("Calculating scores for {} users", users.len());
+        info!("Calculating scores for {} users in parallel", users.len());
         
-        let mut results = Vec::new();
-        for user in users {
-            results.push(self.calculate_user_score(user).await);
-        }
+        // Create futures for parallel user score calculation
+        let score_futures = users.iter().map(|user| {
+            self.calculate_user_score(user)
+        });
         
-        results
+        // Execute all score calculations in parallel
+        join_all(score_futures).await
     }
     
     pub fn is_eligible_for_airdrop(&self, score: &DegenScore) -> bool {

@@ -17,17 +17,20 @@ use crate::{
         Chain, ChainMetrics, DegenMetrics, TokenBalance, NFTBalance,
         TransactionSummary, DegenScoreError, Result, TokenType,
         ProtocolInteraction, ProtocolType, EVMTransaction, EVMTokenTransfer,
-        chain_data::{ProtocolAddresses, EventSignatures, KnownTokens},
+        chain_data::{ProtocolAddresses, EventSignatures, KnownTokens, TokenInteractionMetrics},
         CasinoInteraction, CasinoPlatform, InteractionType, CasinoMetrics,
+        ScoreCache, CacheKey,
     },
-    chains::{ChainClient, client::{ProtocolMetrics, ChainClientConfig}},
+    chains::{ChainClient, client::{ProtocolMetrics, ChainClientConfig}, ResilientRpcClient, CircuitBreakerConfig, RetryConfig},
 };
 
 pub struct EvmClient {
     provider: Arc<Provider<Http>>,
+    resilient_client: ResilientRpcClient,
     chain: Chain,
     chain_id: u64,
     explorer_api: Option<String>,
+    cache: Arc<ScoreCache>,
 }
 
 impl EvmClient {
@@ -37,12 +40,28 @@ impl EvmClient {
         
         let provider = Arc::new(provider);
         
-        // Verify chain ID matches
-        let chain_id = provider.get_chainid().await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: chain.as_str().to_string(),
-                message: format!("Failed to get chain ID: {}", e),
-            })?;
+        // Create resilient RPC client
+        let circuit_config = CircuitBreakerConfig::default();
+        let retry_config = RetryConfig::default();
+        let resilient_client = ResilientRpcClient::new(
+            format!("{}_client", chain.as_str()),
+            circuit_config,
+            retry_config,
+        );
+        
+        // Verify chain ID matches using resilient client
+        let chain_name = chain.as_str().to_string();
+        let chain_id = resilient_client.call(|| {
+            let provider = provider.clone();
+            let chain_name = chain_name.clone();
+            async move {
+                provider.get_chainid().await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get chain ID: {}", e),
+                    })
+            }
+        }).await?;
         
         if let Some(expected_id) = config.chain_id {
             if chain_id.as_u64() != expected_id {
@@ -54,9 +73,11 @@ impl EvmClient {
         
         Ok(Self {
             provider,
+            resilient_client,
             chain,
             chain_id: chain_id.as_u64(),
             explorer_api: None,
+            cache: Arc::new(ScoreCache::default()),
         })
     }
     
@@ -65,28 +86,51 @@ impl EvmClient {
         self
     }
     
+    /// Clear all cached data for this client
+    pub fn clear_cache(&self) {
+        self.cache.clear_all();
+    }
+    
+    /// Get cache statistics
+    pub fn cache_stats(&self) -> crate::models::CacheStats {
+        self.cache.get_stats()
+    }
+    
     async fn get_transaction_history(&self, address: &Address) -> Result<Vec<EVMTransaction>> {
         // For now, we'll use event logs to reconstruct activity
         // In production, we'd use explorer APIs for full history
-        let current_block = self.provider.get_block_number().await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get current block: {}", e),
-            })?;
+        let current_block = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            async move {
+                provider.get_block_number().await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get current block: {}", e),
+                    })
+            }
+        }).await?;
         
-        // Get transactions from the last ~2 months (to avoid rate limits)
-        let from_block = current_block.saturating_sub(U64::from(50_000));
+        // Get transactions from the last ~2 weeks (to avoid rate limits)
+        let from_block = current_block.saturating_sub(U64::from(8_000));
         
         let filter = Filter::new()
             .from_block(from_block)
             .to_block(current_block)
             .address(vec![*address]);
         
-        let logs = self.provider.get_logs(&filter).await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get logs: {}", e),
-            })?;
+        let logs = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            let filter = filter.clone();
+            async move {
+                provider.get_logs(&filter).await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get logs: {}", e),
+                    })
+            }
+        }).await?;
         
         // This is a simplified version - in production we'd parse these logs
         // and potentially use explorer APIs for complete transaction history
@@ -98,13 +142,19 @@ impl EvmClient {
             &ethers::core::utils::keccak256(EventSignatures::ERC20_TRANSFER.as_bytes())
         );
         
-        let current_block = self.provider.get_block_number().await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get current block: {}", e),
-            })?;
+        let current_block = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            async move {
+                provider.get_block_number().await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get current block: {}", e),
+                    })
+            }
+        }).await?;
         
-        let from_block = current_block.saturating_sub(U64::from(30_000));
+        let from_block = current_block.saturating_sub(U64::from(8_000));
         
         // Get transfers FROM the address
         let filter_from = Filter::new()
@@ -120,17 +170,31 @@ impl EvmClient {
             .topic0(transfer_topic)
             .topic2(*address);
         
-        let logs_from = self.provider.get_logs(&filter_from).await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get transfer logs: {}", e),
-            })?;
+        let logs_from = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            let filter = filter_from.clone();
+            async move {
+                provider.get_logs(&filter).await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get transfer logs: {}", e),
+                    })
+            }
+        }).await?;
         
-        let logs_to = self.provider.get_logs(&filter_to).await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get transfer logs: {}", e),
-            })?;
+        let logs_to = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            let filter = filter_to.clone();
+            async move {
+                provider.get_logs(&filter).await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get transfer logs: {}", e),
+                    })
+            }
+        }).await?;
         
         let mut transfers = Vec::new();
         
@@ -145,7 +209,18 @@ impl EvmClient {
         // Fetch block timestamps for unique blocks (limit to avoid too many RPC calls)
         let mut block_timestamps = HashMap::new();
         for &block_num in unique_blocks.iter().take(20) { // Limit to 20 blocks max
-            if let Ok(Some(block)) = self.provider.get_block(block_num).await {
+            let block_result = self.resilient_client.call(|| {
+                let provider = self.provider.clone();
+                async move {
+                    provider.get_block(block_num).await
+                        .map_err(|e| DegenScoreError::RpcError {
+                            chain: "evm".to_string(),
+                            message: format!("Failed to get block {}: {}", block_num, e),
+                        })
+                }
+            }).await;
+            
+            if let Ok(Some(block)) = block_result {
                 block_timestamps.insert(block_num, block.timestamp.as_u64());
             }
         }
@@ -203,32 +278,71 @@ impl EvmClient {
             &ethers::core::utils::keccak256(EventSignatures::GMX_INCREASE_POSITION.as_bytes())
         );
         
-        let current_block = self.provider.get_block_number().await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get current block: {}", e),
-            })?;
+        let decrease_position_topic = H256::from_slice(
+            &ethers::core::utils::keccak256(EventSignatures::GMX_DECREASE_POSITION.as_bytes())
+        );
         
-        let from_block = current_block.saturating_sub(U64::from(30_000)); // ~16 hours on Arbitrum to avoid rate limits
+        let current_block = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            async move {
+                provider.get_block_number().await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get current block: {}", e),
+                    })
+            }
+        }).await?;
         
-        let filter = Filter::new()
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
+        
+        // Check IncreasePosition events
+        let increase_filter = Filter::new()
             .from_block(from_block)
             .to_block(current_block)
             .address(gmx_vault)
             .topic0(increase_position_topic)
             .topic2(*address); // account is the second indexed parameter
         
-        let logs = self.provider.get_logs(&filter).await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get GMX logs: {}", e),
-            })?;
+        let increase_logs = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            let filter = increase_filter.clone();
+            async move {
+                provider.get_logs(&filter).await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get GMX IncreasePosition logs: {}", e),
+                    })
+            }
+        }).await?;
+        
+        // Check DecreasePosition events
+        let decrease_filter = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(gmx_vault)
+            .topic0(decrease_position_topic)
+            .topic2(*address); // account is the second indexed parameter
+        
+        let decrease_logs = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            let filter = decrease_filter.clone();
+            async move {
+                provider.get_logs(&filter).await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get GMX DecreasePosition logs: {}", e),
+                    })
+            }
+        }).await?;
         
         let mut total_volume = Decimal::ZERO;
-        let interaction_count = logs.len() as u32;
+        let mut total_interactions = 0u32;
         
-        // Parse position sizes from logs
-        for log in &logs {
+        // Parse IncreasePosition sizes from logs
+        for log in &increase_logs {
             if log.data.len() >= 256 {
                 // Size is the 5th parameter (uint256) in the event
                 let size_bytes = &log.data[128..160];
@@ -238,11 +352,93 @@ impl EvmClient {
             }
         }
         
+        // Parse DecreasePosition sizes from logs
+        for log in &decrease_logs {
+            if log.data.len() >= 256 {
+                // Size is the 5th parameter (uint256) in the event
+                let size_bytes = &log.data[128..160];
+                let size = U256::from_big_endian(size_bytes);
+                let size_decimal = Decimal::from_str(&size.to_string()).unwrap_or(Decimal::ZERO);
+                total_volume += size_decimal / Decimal::from(10u64.pow(30)); // GMX uses 30 decimals for USD
+            }
+        }
+        
+        total_interactions = (increase_logs.len() + decrease_logs.len()) as u32;
+        
+        info!("GMX activity: {} increase, {} decrease = {} total interactions, ${} volume", 
+              increase_logs.len(), decrease_logs.len(), total_interactions, total_volume);
+        
         Ok(ProtocolMetrics {
             protocol_name: "GMX".to_string(),
-            interaction_count,
+            interaction_count: total_interactions,
             volume_usd: total_volume,
             first_interaction: None, // Would need to fetch block timestamps
+            last_interaction: None,
+            custom_metrics: HashMap::new(),
+        })
+    }
+    
+    async fn check_perpetual_protocol_activity(&self, address: &Address) -> Result<ProtocolMetrics> {
+        if self.chain != Chain::Optimism {
+            return Ok(ProtocolMetrics {
+                protocol_name: "Perpetual Protocol".to_string(),
+                interaction_count: 0,
+                volume_usd: Decimal::ZERO,
+                first_interaction: None,
+                last_interaction: None,
+                custom_metrics: HashMap::new(),
+            });
+        }
+
+        let clearing_house = Address::from_str(ProtocolAddresses::PERP_CLEARING_HOUSE_OPT)
+            .map_err(|_| DegenScoreError::ConfigError("Invalid Perpetual Protocol ClearingHouse address".to_string()))?;
+
+        let current_block = self.provider.get_block_number().await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get current block: {}", e),
+            })?;
+
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
+
+        // Check for any events from the ClearingHouse involving this user
+        let filter = Filter::new()
+            .from_block(from_block)
+            .to_block(current_block)
+            .address(clearing_house);
+
+        let logs = self.provider.get_logs(&filter).await
+            .map_err(|e| DegenScoreError::RpcError {
+                chain: self.chain.as_str().to_string(),
+                message: format!("Failed to get Perpetual Protocol logs: {}", e),
+            })?;
+
+        let mut user_interactions = 0u32;
+        let mut estimated_volume = Decimal::ZERO;
+
+        // Filter logs that involve the user address
+        for log in &logs {
+            let user_involved = log.topics.iter().any(|topic| {
+                // Check if user address appears in any topic
+                topic.as_bytes().ends_with(address.as_bytes())
+            });
+
+            if user_involved {
+                user_interactions += 1;
+                // Estimate volume based on interaction type
+                // Since we can't easily parse the exact volumes without event ABI,
+                // we'll use a reasonable estimate per interaction
+                estimated_volume += Decimal::from(500); // $500 per position interaction
+            }
+        }
+
+        info!("Perpetual Protocol: {} interactions, estimated ${} volume", user_interactions, estimated_volume);
+
+        Ok(ProtocolMetrics {
+            protocol_name: "Perpetual Protocol".to_string(),
+            interaction_count: user_interactions,
+            volume_usd: estimated_volume,
+            first_interaction: None,
             last_interaction: None,
             custom_metrics: HashMap::new(),
         })
@@ -336,7 +532,7 @@ impl EvmClient {
                 message: format!("Failed to get current block: {}", e),
             })?;
         
-        let from_block = current_block.saturating_sub(U64::from(100_000));
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
         
         // Check if user deposited (onBehalfOf parameter)
         let filter = Filter::new()
@@ -426,7 +622,7 @@ impl EvmClient {
                 .map_err(|_| DegenScoreError::ConfigError("Invalid Hyperliquid bridge".to_string()))?;
                 
             // Check for USDC transfers to Hyperliquid bridge (deposits)
-            if let Ok(deposits) = self.check_hyperliquid_deposits(address, &hl_bridge).await {
+            if let Ok((deposits, _volume)) = self.check_hyperliquid_deposits(address, &hl_bridge).await {
                 bridge_uses += deposits;
             }
         }
@@ -451,9 +647,10 @@ impl EvmClient {
         Ok(bridge_uses)
     }
     
-    async fn check_hyperliquid_deposits(&self, user_addr: &Address, bridge_addr: &Address) -> Result<u32> {
+    async fn check_hyperliquid_deposits(&self, user_addr: &Address, bridge_addr: &Address) -> Result<(u32, Decimal)> {
         // Check for USDC transfers from user to Hyperliquid bridge
-        let usdc_arb = Address::from_str("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8") // USDC.e on Arbitrum
+        // Using native USDC on Arbitrum (not USDC.e bridged version)
+        let usdc_arb = Address::from_str("0xaf88d065ef77c8cC2239327C5EDb3A432268e5831") // Native USDC on Arbitrum
             .map_err(|_| DegenScoreError::ConfigError("Invalid USDC address".to_string()))?;
             
         let transfer_topic = H256::from_slice(
@@ -466,7 +663,7 @@ impl EvmClient {
                 message: format!("Failed to get current block: {}", e),
             })?;
         
-        let from_block = current_block.saturating_sub(U64::from(100_000));
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
         
         // Look for transfers: from=user, to=bridge
         let filter = Filter::new()
@@ -480,7 +677,19 @@ impl EvmClient {
         let logs = self.provider.get_logs(&filter).await
             .unwrap_or_default();
             
-        Ok(logs.len() as u32)
+        // Calculate total deposit volume
+        let mut total_volume = Decimal::ZERO;
+        for log in &logs {
+            if log.data.len() >= 32 {
+                let amount = U256::from_big_endian(&log.data[..32]);
+                let amount_decimal = Decimal::from_str(&amount.to_string()).unwrap_or(Decimal::ZERO);
+                // USDC has 6 decimals
+                let amount_usd = amount_decimal / Decimal::from(1_000_000);
+                total_volume += amount_usd;
+            }
+        }
+            
+        Ok((logs.len() as u32, total_volume))
     }
     
     async fn calculate_wallet_age(&self, address: &Address) -> Result<u32> {
@@ -608,7 +817,7 @@ impl EvmClient {
                 message: format!("Failed to get current block: {}", e),
             })?;
         
-        let from_block = current_block.saturating_sub(U64::from(100_000)); // Look back ~2 weeks
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
         
         // Check by looking for any events from the contract where user is involved
         // We'll check if user has ever called the contract by looking at nonce
@@ -646,7 +855,14 @@ impl EvmClient {
     }
     
     async fn check_token_interaction(&self, user_addr: &Address, token_addr: &Address) -> Result<bool> {
-        // Check if user has ever received or sent this token
+        // Check if user has meaningful interactions with this token
+        let interaction_metrics = self.check_token_interaction_detailed(user_addr, token_addr).await?;
+        
+        // Apply refined thresholds for meaningful interaction
+        Ok(self.is_meaningful_token_interaction(&interaction_metrics))
+    }
+    
+    async fn check_token_interaction_detailed(&self, user_addr: &Address, token_addr: &Address) -> Result<TokenInteractionMetrics> {
         let transfer_topic = H256::from_slice(
             &ethers::core::utils::keccak256(EventSignatures::ERC20_TRANSFER.as_bytes())
         );
@@ -657,27 +873,23 @@ impl EvmClient {
                 message: format!("Failed to get current block: {}", e),
             })?;
         
-        let from_block = current_block.saturating_sub(U64::from(100_000));
+        let from_block = current_block.saturating_sub(U64::from(8_000)); // Reduced range for RPC limits
         
-        // Check transfers involving the user
-        let filter = Filter::new()
+        // Check transfers FROM user (outgoing)
+        let filter_from = Filter::new()
             .from_block(from_block)
             .to_block(current_block)
             .address(*token_addr)
             .topic0(transfer_topic)
             .topic1(*user_addr); // User as sender
             
-        let logs_from = self.provider.get_logs(&filter).await
+        let logs_from = self.provider.get_logs(&filter_from).await
             .map_err(|e| DegenScoreError::RpcError {
                 chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get logs: {}", e),
+                message: format!("Failed to get outgoing transfer logs: {}", e),
             })?;
-            
-        if !logs_from.is_empty() {
-            return Ok(true);
-        }
         
-        // Check user as recipient
+        // Check transfers TO user (incoming)
         let filter_to = Filter::new()
             .from_block(from_block)
             .to_block(current_block)
@@ -688,21 +900,83 @@ impl EvmClient {
         let logs_to = self.provider.get_logs(&filter_to).await
             .map_err(|e| DegenScoreError::RpcError {
                 chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get logs: {}", e),
+                message: format!("Failed to get incoming transfer logs: {}", e),
             })?;
         
-        Ok(!logs_to.is_empty())
+        // Calculate total volume
+        let mut total_volume = Decimal::ZERO;
+        for log in logs_from.iter().chain(logs_to.iter()) {
+            if log.data.len() >= 32 {
+                let amount = U256::from_big_endian(&log.data[..32]);
+                let amount_decimal = Decimal::from_str(&amount.to_string()).unwrap_or(Decimal::ZERO);
+                total_volume += amount_decimal;
+            }
+        }
+        
+        Ok(TokenInteractionMetrics {
+            transfers_in: logs_to.len() as u32,
+            transfers_out: logs_from.len() as u32,
+            total_volume_raw: total_volume,
+            first_interaction: None, // Could extract from block timestamps
+            last_interaction: None,
+        })
+    }
+    
+    fn is_meaningful_token_interaction(&self, metrics: &TokenInteractionMetrics) -> bool {
+        let total_transfers = metrics.transfers_in + metrics.transfers_out;
+        
+        // Refined thresholds for meaningful interaction
+        if total_transfers == 0 {
+            return false;
+        }
+        
+        // Require either:
+        // 1. Multiple transfers (not just airdrop) - suggests actual usage
+        if total_transfers > 2 {
+            return true;
+        }
+        
+        // 2. Both directions (received AND sent) - suggests active trading
+        if metrics.transfers_in > 0 && metrics.transfers_out > 0 {
+            return true;
+        }
+        
+        // 3. Large volume (even if single transfer) - suggests significant activity
+        if metrics.total_volume_raw > Decimal::from(1_000_000_000_000_000_000u64) { // > 1 token (assuming 18 decimals)
+            return true;
+        }
+        
+        // Otherwise, likely just dust or airdrop
+        false
     }
     
     async fn check_protocol_interaction(&self, user_addr: &Address, protocol_addr: &Address) -> Result<bool> {
-        // Check if user has interacted with a protocol by looking for transactions to that address
-        let current_block = self.provider.get_block_number().await
-            .map_err(|e| DegenScoreError::RpcError {
-                chain: self.chain.as_str().to_string(),
-                message: format!("Failed to get current block: {}", e),
-            })?;
+        // Check cache first
+        let cache_key = CacheKey::protocol(
+            self.chain.as_str(), 
+            &format!("{:?}", user_addr), 
+            &format!("{:?}", protocol_addr)
+        );
         
-        let from_block = current_block.saturating_sub(U64::from(50_000));
+        // For protocol interactions, we cache as a simple count (0 = no interaction, >0 = has interaction)
+        if let Some(cached_interactions) = self.cache.get_protocol_interactions(&cache_key) {
+            return Ok(cached_interactions.values().sum::<u32>() > 0);
+        }
+        
+        // Check if user has interacted with a protocol by looking for transactions to that address
+        let current_block = self.resilient_client.call(|| {
+            let provider = self.provider.clone();
+            let chain_name = self.chain.as_str().to_string();
+            async move {
+                provider.get_block_number().await
+                    .map_err(|e| DegenScoreError::RpcError {
+                        chain: chain_name,
+                        message: format!("Failed to get current block: {}", e),
+                    })
+            }
+        }).await?;
+        
+        let from_block = current_block.saturating_sub(U64::from(8_000));
         
         // Method 1: Check for transactions FROM user TO protocol
         let filter_to = Filter::new()
@@ -715,6 +989,10 @@ impl EvmClient {
             .unwrap_or_default();
         
         if !logs_to.is_empty() {
+            // Cache the positive result
+            let mut interactions = HashMap::new();
+            interactions.insert(format!("{:?}", protocol_addr), 1);
+            self.cache.set_protocol_interactions(cache_key.clone(), interactions);
             return Ok(true);
         }
         
@@ -728,7 +1006,14 @@ impl EvmClient {
         let logs_from = self.provider.get_logs(&filter_from).await
             .unwrap_or_default();
         
-        Ok(!logs_from.is_empty())
+        let has_interaction = !logs_from.is_empty();
+        
+        // Cache the result
+        let mut interactions = HashMap::new();
+        interactions.insert(format!("{:?}", protocol_addr), if has_interaction { 1 } else { 0 });
+        self.cache.set_protocol_interactions(cache_key, interactions);
+        
+        Ok(has_interaction)
     }
 }
 
@@ -739,6 +1024,13 @@ impl ChainClient for EvmClient {
     }
     
     async fn fetch_metrics(&self, address: &str) -> Result<ChainMetrics> {
+        // Check cache first
+        let cache_key = CacheKey::metrics(self.chain.as_str(), address);
+        if let Some(cached_metrics) = self.cache.get_metrics(&cache_key) {
+            info!("Cache hit for {} on {}", address, self.chain.as_str());
+            return Ok(cached_metrics);
+        }
+        
         let addr = Address::from_str(address)
             .map_err(|_| DegenScoreError::InvalidAddress(address.to_string()))?;
         
@@ -815,6 +1107,9 @@ impl ChainClient for EvmClient {
                         metrics.total_perp_volume_usd += gmx_metrics.volume_usd;
                         metrics.leveraged_positions_count += 1; // User has used leveraged trading
                         protocols_used.insert("GMX");
+                        // Track detailed protocol metrics
+                        *metrics.protocol_interaction_counts.entry("GMX".to_string()).or_insert(0) += gmx_metrics.interaction_count;
+                        *metrics.protocol_volume_usd.entry("GMX".to_string()).or_insert(Decimal::ZERO) += gmx_metrics.volume_usd;
                         info!("GMX activity: {} USD volume, {} trades", gmx_metrics.volume_usd, gmx_metrics.interaction_count);
                     }
                 }
@@ -826,6 +1121,8 @@ impl ChainClient for EvmClient {
             // Check for other protocol interactions (skip GMX routers if already counted)
             let protocols_to_check = vec![
                 (ProtocolAddresses::CAMELOT_ROUTER, "Camelot"),
+                (ProtocolAddresses::GAINS_TRADING_V6, "Gains Network"),
+                (ProtocolAddresses::LEVEL_ROUTER, "Level Finance"),
             ];
             
             for (protocol_addr, protocol_name) in protocols_to_check {
@@ -834,11 +1131,38 @@ impl ChainClient for EvmClient {
                         Ok(has_interaction) => {
                             if has_interaction {
                                 protocols_used.insert(protocol_name);
+                                if protocol_name == "Gains Network" || protocol_name == "Level Finance" {
+                                    metrics.leveraged_positions_count += 1; // These are leveraged trading platforms
+                                }
+                                // Track detailed protocol interaction
+                                *metrics.protocol_interaction_counts.entry(protocol_name.to_string()).or_insert(0) += 1;
                                 info!("Found interaction with {}", protocol_name);
                             }
                         }
                         Err(e) => {
                             warn!("Failed to check {} interaction: {}", protocol_name, e);
+                        }
+                    }
+                }
+            }
+            
+            // Also check for token holdings of these protocols
+            let token_checks = vec![
+                (ProtocolAddresses::GAINS_GNS_TOKEN, "Gains Network"),
+                (ProtocolAddresses::LEVEL_LVL_TOKEN, "Level Finance"),
+            ];
+            
+            for (token_addr, protocol_name) in token_checks {
+                if let Ok(token_address) = Address::from_str(token_addr) {
+                    match self.check_token_interaction(&addr, &token_address).await {
+                        Ok(has_tokens) => {
+                            if has_tokens {
+                                protocols_used.insert(protocol_name);
+                                info!("Found {} token interaction", protocol_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} token: {}", protocol_name, e);
                         }
                     }
                 }
@@ -852,9 +1176,24 @@ impl ChainClient for EvmClient {
                     Ok(has_interaction) => {
                         if has_interaction {
                             protocols_used.insert("Perpetual Protocol");
-                            metrics.total_perp_volume_usd += Decimal::from(1000); // Placeholder - ideally would calculate actual volume
+                            // Try to get more detailed metrics
+                            match self.check_perpetual_protocol_activity(&addr).await {
+                                Ok(perp_metrics) => {
+                                    metrics.total_perp_volume_usd += perp_metrics.volume_usd;
+                                    // Track detailed protocol metrics
+                                    *metrics.protocol_interaction_counts.entry("Perpetual Protocol".to_string()).or_insert(0) += perp_metrics.interaction_count;
+                                    *metrics.protocol_volume_usd.entry("Perpetual Protocol".to_string()).or_insert(Decimal::ZERO) += perp_metrics.volume_usd;
+                                    info!("Perpetual Protocol activity: ${} volume, {} interactions", 
+                                          perp_metrics.volume_usd, perp_metrics.interaction_count);
+                                }
+                                Err(_) => {
+                                    // Fallback: small estimated volume for detected interaction
+                                    metrics.total_perp_volume_usd += Decimal::from(100);
+                                    *metrics.protocol_interaction_counts.entry("Perpetual Protocol".to_string()).or_insert(0) += 1;
+                                    info!("Found Perpetual Protocol activity (estimated volume)");
+                                }
+                            }
                             metrics.leveraged_positions_count += 1; // User has used leveraged trading
-                            info!("Found Perpetual Protocol activity");
                         }
                     }
                     Err(e) => {
@@ -915,15 +1254,179 @@ impl ChainClient for EvmClient {
             }
         }
         
+        // Check Arbitrum-specific protocols
+        if self.chain == Chain::Arbitrum {
+            // Check Gains Network (leveraged trading)
+            let gains_protocols = vec![
+                (ProtocolAddresses::GAINS_TRADING_V6, "Gains Network Trading"),
+                (ProtocolAddresses::GAINS_DAI_VAULT, "Gains Network Vault"),
+            ];
+            
+            for (protocol_addr, protocol_name) in gains_protocols {
+                if let Ok(protocol_address) = Address::from_str(protocol_addr) {
+                    match self.check_protocol_interaction(&addr, &protocol_address).await {
+                        Ok(has_interaction) => {
+                            if has_interaction {
+                                protocols_used.insert(protocol_name);
+                                *metrics.protocol_interaction_counts.entry(protocol_name.to_string()).or_insert(0) += 1;
+                                metrics.leveraged_positions_count += 1; // Gains is leveraged trading
+                                info!("Found interaction with {}", protocol_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} interaction: {}", protocol_name, e);
+                        }
+                    }
+                }
+            }
+            
+            // Check Level Finance
+            if let Ok(level_router) = Address::from_str(ProtocolAddresses::LEVEL_ROUTER) {
+                match self.check_protocol_interaction(&addr, &level_router).await {
+                    Ok(has_interaction) => {
+                        if has_interaction {
+                            protocols_used.insert("Level Finance");
+                            *metrics.protocol_interaction_counts.entry("Level Finance".to_string()).or_insert(0) += 1;
+                            metrics.leveraged_positions_count += 1; // Level is leveraged trading
+                            info!("Found Level Finance activity");
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to check Level Finance: {}", e);
+                    }
+                }
+            }
+            
+            // Check Camelot DEX
+            if let Ok(camelot_router) = Address::from_str(ProtocolAddresses::CAMELOT_ROUTER) {
+                match self.check_protocol_interaction(&addr, &camelot_router).await {
+                    Ok(has_interaction) => {
+                        if has_interaction {
+                            protocols_used.insert("Camelot");
+                            *metrics.protocol_interaction_counts.entry("Camelot".to_string()).or_insert(0) += 1;
+                            info!("Found Camelot DEX activity");
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to check Camelot: {}", e);
+                    }
+                }
+            }
+            
+            // Check for Arbitrum protocol token holdings
+            let arb_token_checks = vec![
+                (ProtocolAddresses::GAINS_GNS_TOKEN, "Gains Network"),
+                (ProtocolAddresses::LEVEL_LVL_TOKEN, "Level Finance"),
+            ];
+            
+            for (token_addr, protocol_name) in arb_token_checks {
+                if let Ok(token_address) = Address::from_str(token_addr) {
+                    match self.check_token_interaction(&addr, &token_address).await {
+                        Ok(has_tokens) => {
+                            if has_tokens {
+                                protocols_used.insert(protocol_name);
+                                info!("Found {} token interaction", protocol_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} token: {}", protocol_name, e);
+                        }
+                    }
+                }
+            }
+        }
+        
         // Check DeFi lending protocols
         if self.check_aave_activity(&addr).await.unwrap_or(false) {
             protocols_used.insert("Aave");
+            *metrics.protocol_interaction_counts.entry("Aave".to_string()).or_insert(0) += 1;
             info!("Found Aave activity");
         }
         
         if self.check_compound_activity(&addr).await.unwrap_or(false) {
             protocols_used.insert("Compound");
+            *metrics.protocol_interaction_counts.entry("Compound".to_string()).or_insert(0) += 1;
             info!("Found Compound activity");
+        }
+        
+        // Check additional major DeFi protocols on Ethereum
+        if self.chain == Chain::Ethereum {
+            let major_defi_protocols = vec![
+                (ProtocolAddresses::CURVE_REGISTRY, "Curve Finance"),
+                (ProtocolAddresses::CURVE_3POOL, "Curve 3Pool"),
+                (ProtocolAddresses::DYDX_PERPETUAL_V3, "dYdX"),
+                (ProtocolAddresses::DYDX_SOLO_MARGIN, "dYdX Solo"),
+                (ProtocolAddresses::MAKER_CDP_MANAGER, "MakerDAO"),
+                (ProtocolAddresses::YEARN_REGISTRY, "Yearn Finance"),
+            ];
+            
+            for (protocol_addr, protocol_name) in major_defi_protocols {
+                if let Ok(protocol_address) = Address::from_str(protocol_addr) {
+                    match self.check_protocol_interaction(&addr, &protocol_address).await {
+                        Ok(has_interaction) => {
+                            if has_interaction {
+                                protocols_used.insert(protocol_name);
+                                *metrics.protocol_interaction_counts.entry(protocol_name.to_string()).or_insert(0) += 1;
+                                if protocol_name.contains("dYdX") {
+                                    metrics.leveraged_positions_count += 1; // dYdX is leveraged trading
+                                }
+                                info!("Found interaction with {}", protocol_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} interaction: {}", protocol_name, e);
+                        }
+                    }
+                }
+            }
+            
+            // Check NFT marketplace activity
+            let nft_marketplaces = vec![
+                (ProtocolAddresses::OPENSEA_SEAPORT, "OpenSea"),
+                (ProtocolAddresses::OPENSEA_WYVERN_EXCHANGE, "OpenSea Legacy"),
+                (ProtocolAddresses::BLUR_EXCHANGE, "Blur"),
+                (ProtocolAddresses::X2Y2_EXCHANGE, "X2Y2"),
+                (ProtocolAddresses::LOOKSRARE_EXCHANGE, "LooksRare"),
+            ];
+            
+            for (marketplace_addr, marketplace_name) in nft_marketplaces {
+                if let Ok(marketplace_address) = Address::from_str(marketplace_addr) {
+                    match self.check_protocol_interaction(&addr, &marketplace_address).await {
+                        Ok(has_interaction) => {
+                            if has_interaction {
+                                protocols_used.insert(marketplace_name);
+                                *metrics.protocol_interaction_counts.entry(marketplace_name.to_string()).or_insert(0) += 1;
+                                metrics.nft_trades += 1; // Increment NFT trading activity
+                                info!("Found NFT trading activity on {}", marketplace_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} interaction: {}", marketplace_name, e);
+                        }
+                    }
+                }
+            }
+            
+            // Check for token holdings of major protocols
+            let token_checks = vec![
+                (ProtocolAddresses::DYDX_TOKEN, "dYdX"),
+            ];
+            
+            for (token_addr, protocol_name) in token_checks {
+                if let Ok(token_address) = Address::from_str(token_addr) {
+                    match self.check_token_interaction(&addr, &token_address).await {
+                        Ok(has_tokens) => {
+                            if has_tokens {
+                                protocols_used.insert(protocol_name);
+                                info!("Found {} token interaction", protocol_name);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to check {} token: {}", protocol_name, e);
+                        }
+                    }
+                }
+            }
         }
         
         // Check bridge usage
@@ -936,6 +1439,26 @@ impl ChainClient for EvmClient {
             }
             Err(e) => {
                 warn!("Failed to check bridge activity: {}", e);
+            }
+        }
+        
+        // Check Hyperliquid deposits specifically on Arbitrum
+        if self.chain == Chain::Arbitrum {
+            if let Ok(hl_bridge) = Address::from_str(ProtocolAddresses::HYPERLIQUID_BRIDGE_ARB) {
+                match self.check_hyperliquid_deposits(&addr, &hl_bridge).await {
+                    Ok((deposits, volume)) => {
+                        if deposits > 0 {
+                            metrics.hyperliquid_volume_usd = volume;
+                            metrics.total_perp_volume_usd += volume; // Add to total perp volume
+                            metrics.leveraged_positions_count += 1; // Hyperliquid is leveraged trading
+                            protocols_used.insert("Hyperliquid");
+                            info!("Hyperliquid activity: {} deposits, ${} total volume", deposits, volume);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to check Hyperliquid deposits: {}", e);
+                    }
+                }
             }
         }
         
@@ -984,12 +1507,17 @@ impl ChainClient for EvmClient {
         debug!("Total TX count: {}, Distinct tokens: {}", metrics.total_tx_count, metrics.distinct_tokens_traded);
         debug!("DeFi protocols used: {}", metrics.defi_protocols_used);
         
-        Ok(ChainMetrics {
+        let chain_metrics = ChainMetrics {
             chain: self.chain.as_str().to_string(),
             address: address.to_string(),
             metrics,
             last_updated: Utc::now(),
-        })
+        };
+        
+        // Cache the result
+        self.cache.set_metrics(cache_key, chain_metrics.clone());
+        
+        Ok(chain_metrics)
     }
     
     async fn get_transaction_summary(
@@ -1018,6 +1546,25 @@ impl ChainClient for EvmClient {
     }
     
     async fn get_token_balances(&self, address: &str) -> Result<Vec<TokenBalance>> {
+        // Check cache first
+        let cache_key_prefix = format!("{}:{}", self.chain.as_str(), address.to_lowercase());
+        if let Some(cached_balances) = self.cache.get_balances(&cache_key_prefix) {
+            info!("Cache hit for token balances {} on {}", address, self.chain.as_str());
+            // Convert HashMap to Vec<TokenBalance> 
+            let mut balances = Vec::new();
+            for (token_addr, balance) in cached_balances {
+                // For now, return a simplified version
+                balances.push(TokenBalance {
+                    token_address: token_addr,
+                    balance: U256::from_dec_str(&balance.to_string()).unwrap_or(U256::zero()),
+                    decimals: 18, // Default, would need proper token info
+                    symbol: "UNKNOWN".to_string(),
+                    name: "Unknown Token".to_string(),
+                });
+            }
+            return Ok(balances);
+        }
+        
         let addr = Address::from_str(address)
             .map_err(|_| DegenScoreError::InvalidAddress(address.to_string()))?;
         
@@ -1048,6 +1595,14 @@ impl ChainClient for EvmClient {
             });
         }
         
+        // Cache the balances as a HashMap
+        let mut balance_map = HashMap::new();
+        for token_balance in &balances {
+            let balance_decimal = Decimal::from_str(&token_balance.balance.to_string()).unwrap_or(Decimal::ZERO);
+            balance_map.insert(token_balance.token_address.clone(), balance_decimal);
+        }
+        self.cache.set_balances(cache_key_prefix, balance_map);
+        
         Ok(balances)
     }
     
@@ -1071,7 +1626,7 @@ impl ChainClient for EvmClient {
                 message: format!("Failed to get current block: {}", e),
             })?;
         
-        let from_block = current_block.saturating_sub(U64::from(1_000_000));
+        let from_block = current_block.saturating_sub(U64::from(8_000));
         
         let filter = Filter::new()
             .from_block(from_block)

@@ -10,6 +10,7 @@ pub struct DegenMetrics {
     pub gmx_trades: u32,
     pub jupiter_swaps: u32,
     pub bridges_used: u32,  // Number of bridge interactions (Hyperliquid, Hop, Across, etc.)
+    pub hyperliquid_volume_usd: Decimal, // Total USDC deposited to Hyperliquid
     pub total_perp_volume_usd: Decimal,
     
     // Gambling metrics
@@ -54,6 +55,11 @@ pub struct DegenMetrics {
     pub liquidations_count: u32,
     pub rugpull_exposure_count: u32,
     pub max_single_loss_usd: Decimal,
+    
+    // Enhanced protocol tracking
+    pub protocol_interaction_counts: HashMap<String, u32>, // protocol_name -> interaction_count
+    pub protocol_volume_usd: HashMap<String, Decimal>, // protocol_name -> total_volume_usd
+    pub protocol_first_use: HashMap<String, DateTime<Utc>>, // protocol_name -> first_interaction_timestamp
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +144,7 @@ impl DegenMetrics {
         self.gmx_trades += other.gmx_trades;
         self.jupiter_swaps += other.jupiter_swaps;
         self.bridges_used += other.bridges_used;
+        self.hyperliquid_volume_usd += other.hyperliquid_volume_usd;
         self.total_perp_volume_usd += other.total_perp_volume_usd;
         
         self.casinos_used += other.casinos_used;
@@ -178,6 +185,25 @@ impl DegenMetrics {
         
         if other.max_single_loss_usd > self.max_single_loss_usd {
             self.max_single_loss_usd = other.max_single_loss_usd;
+        }
+        
+        // Merge protocol tracking data
+        for (protocol, count) in &other.protocol_interaction_counts {
+            *self.protocol_interaction_counts.entry(protocol.clone()).or_insert(0) += count;
+        }
+        
+        for (protocol, volume) in &other.protocol_volume_usd {
+            *self.protocol_volume_usd.entry(protocol.clone()).or_insert(Decimal::ZERO) += volume;
+        }
+        
+        for (protocol, timestamp) in &other.protocol_first_use {
+            self.protocol_first_use.entry(protocol.clone())
+                .and_modify(|existing| {
+                    if timestamp < existing {
+                        *existing = *timestamp;
+                    }
+                })
+                .or_insert(*timestamp);
         }
         
         // Update time-based metrics
